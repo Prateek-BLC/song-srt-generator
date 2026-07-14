@@ -32,6 +32,15 @@ Recorded 2026-07-15 from Aman's answers.
 - **Eventually shipped as an installable zip:** unzip → run one installer script → it checks system (Python 3.10/3.11, ffmpeg), detects platform, installs the right dependency set into a venv, downloads models, runs `warmup.py` to PASS, creates start script. User prerequisite: Python installed (fully-bundled standalone app deferred to V2+).
 - **Settings live in `config.py` only.** No settings panel in the app UI — UI stays upload → paste → generate.
 
+## V2 additions (2026-07-15, after Aman's real-song test passed)
+
+- **Video-format toggle** in the UI: "vertical" (9:16 Reels/TikTok) or "horizontal" (16:9 YouTube). One SRT per run, format chosen by the user (Aman's explicit decision — never generate both).
+- **Single-line cues with hard character caps:** 25 chars vertical / 42 chars horizontal (research: Netflix 42 standard; ~25 recommended for 9:16 mobile). Caps are maximums, never minimums.
+- **Splitting rules in priority order:** never merge across the user's lyric lines → a comma/full stop/`?`/`!` always ends the cue → over-cap runs split at the most balanced word boundary. Cue times come from word-level timestamps (stable-ts already produced them; no re-alignment needed).
+- **Early-appear offset:** cues show 0.2 s before the vocal (karaoke practice), `EARLY_APPEAR_SECONDS` in config, clamped at 0.
+- `cues.json` now stores per-cue word timings — groundwork for the future preview/nudge editor.
+- Aman confirmed V1 output syncs "perfectly to the beat" on a real song before V2 was built.
+
 ## Hard rules (unchanged from brief)
 
 No Docker, no databases, no React/JS frameworks, no Electron, no cloud calls at runtime, no paid APIs, no accounts, no telemetry. Python + Gradio only. App must run without any coding agent present.

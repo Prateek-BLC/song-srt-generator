@@ -27,6 +27,18 @@ STRIP_TAGS_DEFAULT = True
 # Format of the downloadable isolated vocal stem: "wav" (exact) or "mp3" (small, 320 kbps).
 STEM_FORMAT = "wav"
 
+# Max characters per subtitle line by video format (hard caps, never exceeded).
+# Vertical follows 9:16 mobile guidance (~25); horizontal follows the Netflix standard (42).
+MAX_CHARS_VERTICAL = 25
+MAX_CHARS_HORIZONTAL = 42
+
+# Default video format in the UI: "vertical" (9:16 Reels/TikTok) or "horizontal" (16:9 YouTube).
+FORMAT_DEFAULT = "vertical"
+
+# Show each subtitle this many seconds before the vocal actually starts (karaoke practice,
+# text never feels late). Set to 0 to disable.
+EARLY_APPEAR_SECONDS = 0.2
+
 # Vocal separation engine: "mlx" (Apple Silicon GPU, fast) or "cpu" (cross-platform audio-separator).
 # The installer sets this per machine; don't change it unless you know why.
 SEPARATOR_ENGINE = "mlx"

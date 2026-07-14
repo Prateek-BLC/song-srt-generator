@@ -32,7 +32,7 @@ def load_lyrics_file(file_path):
         return gr.update()
 
 
-def generate(audio_path, lyrics_text, strip_tags):
+def generate(audio_path, lyrics_text, strip_tags, video_format):
     """Generator handler: streams status updates while the pipeline runs in a thread."""
     busy = gr.update(interactive=False)
     idle = gr.update(interactive=True)
@@ -59,7 +59,7 @@ def generate(audio_path, lyrics_text, strip_tags):
         try:
             result_box["result"] = run_pipeline(
                 audio_path, lyrics_text, strip_tags=strip_tags,
-                progress_callback=progress_callback,
+                video_format=video_format, progress_callback=progress_callback,
             )
         except PipelineError as e:
             result_box["error"] = str(e)
@@ -114,6 +114,15 @@ with gr.Blocks(title=APP_TITLE, analytics_enabled=False) as demo:
             strip_tags_box = gr.Checkbox(
                 label="Strip [section] tags like [Chorus]", value=config.STRIP_TAGS_DEFAULT,
             )
+            format_box = gr.Radio(
+                label="Video format",
+                info="Sets how long each subtitle line can be.",
+                choices=[
+                    ("Vertical 9:16 — Reels / TikTok (short lines)", "vertical"),
+                    ("Horizontal 16:9 — YouTube (longer lines)", "horizontal"),
+                ],
+                value=config.FORMAT_DEFAULT,
+            )
             generate_btn = gr.Button("Generate SRT", variant="primary")
         with gr.Column():
             status_md = gr.Markdown("Upload a song, paste the lyrics, then hit **Generate SRT**.")
@@ -123,7 +132,7 @@ with gr.Blocks(title=APP_TITLE, analytics_enabled=False) as demo:
     lyrics_file.upload(load_lyrics_file, inputs=lyrics_file, outputs=lyrics_box)
     generate_btn.click(
         generate,
-        inputs=[audio_in, lyrics_box, strip_tags_box],
+        inputs=[audio_in, lyrics_box, strip_tags_box, format_box],
         outputs=[status_md, srt_out, vocals_out, generate_btn],
     )
 

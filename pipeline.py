@@ -217,6 +217,74 @@ def align_lyrics(vocals_path: Path, lyric_lines: list[str], log: logging.Logger)
 
 
 # ---------------------------------------------------------------------------
+# Stage 3.5: chunk aligned lines into screen-sized cues
+
+# A word ending in clause/sentence punctuation always ends the cue.
+PUNCT_BREAK = re.compile(r"[,.;:!?…]['\"\)\]]*$")
+
+
+def _split_run(run: list, max_chars: int) -> list[list]:
+    """Split a punctuation-free word run into balanced pieces of at most max_chars."""
+    text = " ".join(w.word.strip() for w in run)
+    if len(text) <= max_chars:
+        return [run]
+    import math
+
+    target = len(text) / math.ceil(len(text) / max_chars)
+    pieces, cur, cur_len = [], [], 0
+    for w in run:
+        wlen = len(w.word.strip()) + (1 if cur else 0)
+        if cur and (cur_len + wlen > max_chars or cur_len >= target):
+            pieces.append(cur)
+            cur, cur_len = [], 0
+            wlen = len(w.word.strip())
+        cur.append(w)
+        cur_len += wlen
+    if cur:
+        pieces.append(cur)
+    return pieces
+
+
+def chunk_segments(segments, max_chars: int) -> list[dict]:
+    """Turn aligned lyric lines into single-line cues.
+
+    Rules (in priority order): never merge across the user's lyric lines; a comma or
+    full stop always ends a cue; no cue exceeds max_chars (split at the most balanced
+    word boundary); cue times come from word-level timestamps.
+    """
+    cues = []
+    for seg in segments:
+        words = [w for w in seg.words if w.word.strip()]
+        if not words:
+            continue
+        runs, cur = [], []
+        for w in words:
+            cur.append(w)
+            if PUNCT_BREAK.search(w.word.strip()):
+                runs.append(cur)
+                cur = []
+        if cur:
+            runs.append(cur)
+        for run in runs:
+            for piece in _split_run(run, max_chars):
+                cues.append({
+                    "start": float(piece[0].start),
+                    "end": float(piece[-1].end),
+                    "text": " ".join(w.word.strip() for w in piece),
+                    "words": [
+                        {"word": w.word.strip(), "start": float(w.start), "end": float(w.end)}
+                        for w in piece
+                    ],
+                })
+    if config.EARLY_APPEAR_SECONDS > 0:
+        for cue in cues:
+            cue["start"] = max(0.0, cue["start"] - config.EARLY_APPEAR_SECONDS)
+    for i, cue in enumerate(cues, start=1):
+        cue["index"] = i
+    return cues
+
+
+# ---------------------------------------------------------------------------
 # Stage 4: outputs
 
 def sanitize_cues(cues: list[dict]) -> list[dict]:
@@ -294,9 +362,10 @@ def _job_logger(job_dir: Path) -> logging.Logger:
 
 
 def run_pipeline(audio_path, lyrics_text: str, strip_tags: bool = True,
-                 progress_callback=None) -> dict:
+                 video_format: str = None, progress_callback=None) -> dict:
     """Run the full pipeline. Returns a result dict with paths and metadata.
 
+    video_format: "vertical" (9:16, short lines) or "horizontal" (16:9).
     progress_callback(step:int, total:int, message:str) drives UI status text.
     Raises PipelineError with a user-safe message on any failure.
     """
@@ -304,6 +373,9 @@ def run_pipeline(audio_path, lyrics_text: str, strip_tags: bool = True,
         if progress_callback:
             progress_callback(step, total, message)
 
+    video_format = video_format or config.FORMAT_DEFAULT
+    max_chars = (config.MAX_CHARS_VERTICAL if video_format == "vertical"
+                 else config.MAX_CHARS_HORIZONTAL)
     audio_path = Path(audio_path)
     duration, duration_warning = validate_audio(audio_path)
     lyric_lines, lyric_warning = preprocess_lyrics(lyrics_text, strip_tags=strip_tags)
@@ -311,8 +383,8 @@ def run_pipeline(audio_path, lyrics_text: str, strip_tags: bool = True,
 
     job_dir = _make_job_dir(audio_path)
     log = _job_logger(job_dir)
-    log.info("Input: %s (%.1fs), %d lyric lines, strip_tags=%s",
-             audio_path.name, duration, len(lyric_lines), strip_tags)
+    log.info("Input: %s (%.1fs), %d lyric lines, strip_tags=%s, format=%s (max %d chars/line)",
+             audio_path.name, duration, len(lyric_lines), strip_tags, video_format, max_chars)
     for w in warnings:
         log.warning(w)
 
@@ -336,12 +408,7 @@ def run_pipeline(audio_path, lyrics_text: str, strip_tags: bool = True,
 
         report(3, 3, "Step 3 of 3 — building SRT…")
         t0 = time.perf_counter()
-        cues = [
-            {"index": i, "start": float(seg.start), "end": float(seg.end),
-             "text": seg.text.strip()}
-            for i, seg in enumerate(result.segments, start=1)
-            if seg.text.strip()
-        ]
+        cues = chunk_segments(result.segments, max_chars)
         cues = sanitize_cues(cues)
 
         srt_path = job_dir / f"{audio_path.stem}.srt"
@@ -349,6 +416,9 @@ def run_pipeline(audio_path, lyrics_text: str, strip_tags: bool = True,
 
         cues_json = {
             "source_file": audio_path.name,
+            "video_format": video_format,
+            "max_chars_per_line": max_chars,
+            "early_appear_seconds": config.EARLY_APPEAR_SECONDS,
             "model_size": config.MODEL_SIZE,
             "language": config.LANGUAGE,
             "separator_engine": config.SEPARATOR_ENGINE,
@@ -388,10 +458,11 @@ def run_pipeline(audio_path, lyrics_text: str, strip_tags: bool = True,
 # CLI
 
 def main(argv: list[str]) -> int:
-    if len(argv) != 2:
-        print("Usage: python pipeline.py <audio> <lyrics.txt>")
+    if len(argv) not in (2, 3) or (len(argv) == 3 and argv[2] not in ("vertical", "horizontal")):
+        print("Usage: python pipeline.py <audio> <lyrics.txt> [vertical|horizontal]")
         return 2
     audio, lyrics_file = Path(argv[0]), Path(argv[1])
+    video_format = argv[2] if len(argv) == 3 else None
     lyrics_text = lyrics_file.read_text(encoding="utf-8")
 
     def progress(step, total, message):
@@ -400,6 +471,7 @@ def main(argv: list[str]) -> int:
     try:
         result = run_pipeline(audio, lyrics_text,
                               strip_tags=config.STRIP_TAGS_DEFAULT,
+                              video_format=video_format,
                               progress_callback=progress)
     except PipelineError as e:
         print(f"FAILED: {e}")
