@@ -5,3 +5,5 @@ __pycache__/
 .DS_Store
 models/
 .cache/
+uploads/
+frontend/node_modules/

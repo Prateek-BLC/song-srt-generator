@@ -48,7 +48,7 @@ call .venv\Scripts\activate.bat
 python -m pip install --upgrade pip -q
 echo Installing dependencies (CPU engine for Windows)...
 pip install torch --index-url https://download.pytorch.org/whl/cpu -q
-pip install stable-ts faster-whisper gradio "audio-separator[cpu]" -q
+pip install stable-ts faster-whisper fastapi "uvicorn[standard]" python-multipart "audio-separator[cpu]" -q
 
 REM Tell the app to use the cross-platform engine
 python -c "import re,pathlib; p=pathlib.Path('config.py'); p.write_text(re.sub(r'^SEPARATOR_ENGINE = .*', 'SEPARATOR_ENGINE = \"cpu\"', p.read_text(), flags=re.M))"

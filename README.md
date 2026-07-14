@@ -11,7 +11,7 @@ Upload an AI-generated song plus the lyrics it was written from — get back a p
 
 ## Using it
 
-1. **Mac:** run `start.sh` — **Windows:** run `start.bat` (or `python app.py`). Your browser opens automatically.
+1. **Mac:** run `start.sh` — **Windows:** run `start.bat` (or `python app.py`). Your browser opens automatically. Use the toggle in the top-right corner for dark mode.
 2. Upload the song (MP3, WAV, M4A, or FLAC).
 3. Paste the lyrics exactly as sung — one line becomes one subtitle. Write out every repeated chorus in full. You can also upload a `.txt` to fill the box.
 4. Pick the **video format**: Vertical 9:16 for Reels/TikTok (short subtitle lines, max 25 characters) or Horizontal 16:9 for YouTube (up to 42 characters). Every subtitle is a single line; a comma or full stop in your lyrics always starts a new subtitle — punctuate the lyrics the way the song breathes and the captions will follow.

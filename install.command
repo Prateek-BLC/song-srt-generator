@@ -49,7 +49,7 @@ if [ "$ARCH" = "arm64" ]; then
   pip install -q -r requirements.txt
 else
   echo "Intel Mac detected — installing the CPU separation engine..."
-  pip install -q stable-ts faster-whisper gradio "audio-separator[cpu]"
+  pip install -q stable-ts faster-whisper fastapi "uvicorn[standard]" python-multipart "audio-separator[cpu]"
   # Tell the app to use the cross-platform engine
   /usr/bin/sed -i '' 's/^SEPARATOR_ENGINE = .*/SEPARATOR_ENGINE = "cpu"/' config.py
 fi
