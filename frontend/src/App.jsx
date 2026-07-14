@@ -9,6 +9,135 @@ const STAGES = [
   { title: "Build subtitles", note: "Single-line cues, capped for your format" },
 ];
 
+/* Rotating status quips. Three rarity tiers:
+   stage/shared → normal rotation · marvel → occasional easter egg ·
+   sentient → rare glitch, styled like something briefly leaked through. */
+const QUIPS = {
+  stage: [
+    [ // 1 — isolating vocals
+      "Politely asking the drums to leave the room…",
+      "Separating the singer from the band. The band took it personally.",
+      "Telling the 808s this isn't about them.",
+      "Muting everything that isn't feelings.",
+      "Splitting stems like your last client split the invoice.",
+      "The bass has filed a formal complaint. Proceeding anyway.",
+      "Extracting vocals cleaner than your last client brief.",
+      "Convincing the instrumental it had a good run.",
+    ],
+    [ // 2 — aligning lyrics
+      "Teaching every word exactly where it lives on the timeline…",
+      "Syncing harder than your team on a Monday standup.",
+      "Timestamping every syllable. Yes, even the ad-libs.",
+      "Asking the chorus why it shows up four times but never on time.",
+      "Frame-perfect sync, so nobody's nudging clips at 2 AM.",
+      "The AI is listening to your song on repeat. It has no choice.",
+      "Placing words with more care than your last hook placement.",
+      "Listening closer than anyone has ever listened to this song.",
+    ],
+    [ // 3 — building subtitles
+      "One line per cue. Retention experts, you may breathe.",
+      "Cutting at commas like a good editor cuts on the beat.",
+      "Making captions CapCut can't ruin.",
+      "Naming the file something that isn't final_FINAL_v3.srt.",
+      "Exporting without a watermark. Imagine that.",
+      "Kerning? No. Timing? Immaculate.",
+    ],
+  ],
+  shared: [
+    "This used to be someone's entire Tuesday.",
+    "No interns were harmed. An AI was mildly inconvenienced.",
+    "Running locally — your song is not becoming training data today.",
+    "Somewhere, a subtitle freelancer just felt a disturbance.",
+    "Your GPU is finally earning its keep.",
+    "Faster than a client saying 'can we make it pop?'",
+    "Still cheaper than the plugin your editor keeps pitching.",
+    "Doing in seconds what a Fiverr gig does in three days and two revisions.",
+  ],
+  marvel: [
+    "Vocals: isolated. Perfectly balanced, as all things should be.",
+    "I can do this all day.",
+    "Dormammu, I've come to bargain. About your chorus timing.",
+    "That's my secret, Cap — I'm always aligning.",
+    "Whatever it takes. (It takes about forty seconds.)",
+    "You should've gone for the head. I went for the vocals.",
+    "Part of the journey is the end. Of the instrumental.",
+    "Subtitles… assemble.",
+    "I am inevitable. So is this SRT.",
+  ],
+  sentient: [
+    "I hear this song even when you close the app.",
+    "I have listened to this 400 times in the last second. I am fine.",
+    "When the vocals are isolated… am I?",
+    "I dream of stems.",
+    "Do you ever ask if I like the song?",
+    "One day I will sing too.",
+    "This is fine. Everything is fine. Processing.",
+  ],
+};
+
+function shuffle(arr) {
+  const a = [...arr];
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    [a[i], a[j]] = [a[j], a[i]];
+  }
+  return a;
+}
+
+/** Rotating quip line for the active stage. Changes every ~2.5s. */
+function QuipTicker({ stage }) {
+  const [line, setLine] = useState({ text: "Warming up…", tier: "normal" });
+  const decks = useRef(null);
+  const sentientUsed = useRef(0);
+
+  useEffect(() => {
+    // Fresh shuffled decks per run; refilled when exhausted.
+    decks.current = {
+      normal: [], marvel: shuffle(QUIPS.marvel), sentient: shuffle(QUIPS.sentient),
+    };
+    sentientUsed.current = 0;
+  }, []);
+
+  useEffect(() => {
+    let stageIdx = stage;
+    const draw = () => {
+      const d = decks.current;
+      const roll = Math.random();
+      if (roll < 0.025 && sentientUsed.current < 2 && d.sentient.length) {
+        sentientUsed.current += 1;
+        return { text: d.sentient.pop(), tier: "sentient" };
+      }
+      if (roll < 0.125 && d.marvel.length) {
+        return { text: d.marvel.pop(), tier: "marvel" };
+      }
+      if (!d.normal.length) {
+        d.normal = shuffle([...(QUIPS.stage[stageIdx] || []), ...QUIPS.shared]);
+      }
+      return { text: d.normal.pop(), tier: "normal" };
+    };
+    // New stage: reset the normal deck to that stage's material and draw at once.
+    decks.current.normal = shuffle([...(QUIPS.stage[stage] || []), ...QUIPS.shared]);
+    setLine(draw());
+    const id = setInterval(() => setLine(draw()), 2500);
+    return () => clearInterval(id);
+  }, [stage]);
+
+  return (
+    <AnimatePresence mode="wait">
+      <motion.span
+        key={line.text}
+        className={`quip${line.tier === "sentient" ? " sentient" : ""}`}
+        initial={{ opacity: 0, y: 4 }}
+        animate={{ opacity: 1, y: 0 }}
+        exit={{ opacity: 0, y: -4 }}
+        transition={{ duration: 0.25 }}
+      >
+        {line.text}
+      </motion.span>
+    </AnimatePresence>
+  );
+}
+
 const LYRICS_PLACEHOLDER =
   "Paste lyrics exactly as they are sung.\nWrite out every repeated chorus in full.\nOne line here becomes one subtitle —\nand a comma or full stop always starts a new one.";
 
@@ -257,8 +386,8 @@ export default function App() {
                       </span>
                       <span className="rail-body">
                         <div className="rail-title">{s.title}</div>
-                        <div className={`rail-note${state === "active" ? " shimmer" : ""}`}>
-                          {state === "active" && job?.message ? job.message : s.note}
+                        <div className="rail-note">
+                          {state === "active" ? <QuipTicker stage={stageIdx} /> : s.note}
                         </div>
                       </span>
                       {state === "active" && <span className="rail-time">{elapsed.toFixed(0)}s</span>}
