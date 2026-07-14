@@ -2,16 +2,19 @@
 
 Upload an AI-generated song plus the lyrics it was written from — get back a perfectly timestamped SRT subtitle file. It never transcribes: your known lyrics are snapped to the isolated vocal track, so every subtitle matches a lyric line exactly as written. Everything runs on your machine; files never leave your computer.
 
-## Setup (once)
+## Setup (once) — Apple Silicon Macs
 
-1. Install **Python 3.11** (or 3.10) from https://www.python.org/downloads/ if you don't have it. On Windows, tick "Add to PATH".
-2. **Mac:** double-click `install.command` (or run `bash install.command` in Terminal).
-   **Windows:** double-click `install.bat`.
-3. The installer checks your system, installs ffmpeg if needed, sets up dependencies for your machine, downloads the models (~2 GB, needs internet this once), and verifies everything with a test run. Wait for **PASS**.
+Nothing needs to be pre-installed. Not even Python.
+
+1. Unzip the release zip.
+2. Right-click `Install.command` → **Open** → **Open**. Wait for **PASS** (first time 5–20 min — it sets up a private Python, ffmpeg, and the AI models, all *inside this folder*; your Mac is otherwise untouched).
+3. Done. To uninstall, delete the folder.
+
+Building a release zip from this repo: `./make_release.sh <version>` (add `--full` to bake the models in for offline installs).
 
 ## Using it
 
-1. **Mac:** run `start.sh` — **Windows:** run `start.bat` (or `python app.py`). Your browser opens automatically. Use the toggle in the top-right corner for dark mode.
+1. Double-click `Start.command` (browser opens automatically). Use the toggle in the top-right corner for dark mode.
 2. Upload the song (MP3, WAV, M4A, or FLAC).
 3. Paste the lyrics exactly as sung — one line becomes one subtitle. Write out every repeated chorus in full. You can also upload a `.txt` to fill the box.
 4. Pick the **video format**: Vertical 9:16 for Reels/TikTok (short subtitle lines, max 25 characters) or Horizontal 16:9 for YouTube (up to 42 characters). Every subtitle is a single line; a comma or full stop in your lyrics always starts a new subtitle — punctuate the lyrics the way the song breathes and the captions will follow.

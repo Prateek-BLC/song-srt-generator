@@ -1,64 +1,63 @@
 #!/bin/bash
-# Song SRT Generator — one-time installer for macOS.
-# Double-click this file (or run: bash install.command). Safe to re-run.
-set -e
-cd "$(dirname "$0")"
+# Song SRT Generator — one-time installer for Apple Silicon Macs.
+# Everything installs INSIDE this folder. Nothing on your Mac is touched.
+# Needs internet once (Python runtime + AI models). Safe to re-run anytime.
 
-echo "=== Song SRT Generator installer (macOS) ==="
+DIR="$(cd "$(dirname "$0")" && pwd)"
+cd "$DIR"
 
-# 1. Find Python 3.10 or 3.11
-PY=""
-for candidate in python3.11 python3.10; do
-  if command -v "$candidate" >/dev/null 2>&1; then PY="$candidate"; break; fi
-done
-if [ -z "$PY" ]; then
+say_fail() {
   echo ""
-  echo "Python 3.10 or 3.11 is required and wasn't found."
-  echo "Install it from https://www.python.org/downloads/ (choose 3.11), then run this again."
+  echo "✗ Something didn't finish. No harm done — your Mac is unchanged."
+  echo "  1) Check your internet connection"
+  echo "  2) Double-click this installer again (it continues where it stopped)"
+  echo "  3) Still stuck? Send Aman a screenshot of this window."
+  echo ""
+  exit 1
+}
+trap say_fail ERR
+set -e
+
+echo ""
+echo "  Song SRT Generator — installing"
+echo "  Everything stays inside this folder. Nothing else on your Mac is touched."
+echo ""
+
+# Only Apple Silicon is supported in this build.
+if [ "$(uname -m)" != "arm64" ]; then
+  echo "✗ This build is for Apple Silicon Macs (M1/M2/M3/M4)."
+  echo "  This Mac is $(uname -m). Ask Aman for the right build."
   exit 1
 fi
-echo "OK  Using $($PY --version)"
 
-# 2. ffmpeg
-if ! command -v ffmpeg >/dev/null 2>&1; then
-  if command -v brew >/dev/null 2>&1; then
-    echo "Installing ffmpeg with Homebrew..."
-    brew install ffmpeg
-  else
-    echo ""
-    echo "ffmpeg is required and wasn't found, and Homebrew isn't installed."
-    echo "Either install Homebrew (https://brew.sh) and run this again,"
-    echo "or download a static ffmpeg build from https://evermeet.cx/ffmpeg/,"
-    echo "unzip it, and move the ffmpeg and ffprobe files into /usr/local/bin/."
-    exit 1
-  fi
+# Let later double-clicks (Start) run without Gatekeeper warnings.
+xattr -dr com.apple.quarantine . 2>/dev/null || true
+
+# Bundled tools: uv (installs a private Python), ffmpeg/ffprobe (audio handling).
+if [ ! -x "bin/uv" ] || [ ! -x "bin/ffmpeg" ] || [ ! -x "bin/ffprobe" ]; then
+  echo "✗ The bin/ folder is missing from this download."
+  echo "  Re-download the zip from Aman and unzip it again."
+  exit 1
 fi
-echo "OK  $(ffmpeg -version | head -1)"
+export PATH="$DIR/bin:$PATH"
+export UV_PYTHON_INSTALL_DIR="$DIR/.python"
+export UV_CACHE_DIR="$DIR/.uv-cache"
+export HF_HOME="$DIR/models/hf"
 
-# 3. Virtual environment + dependencies (platform-aware)
-if [ ! -d .venv ]; then
-  echo "Creating virtual environment..."
-  "$PY" -m venv .venv
+echo "[1/3] Setting up the app's private Python…"
+if [ ! -x ".venv/bin/python" ]; then
+  bin/uv venv --quiet --python 3.10 .venv
 fi
-source .venv/bin/activate
-python -m pip install --upgrade pip -q
+bin/uv pip install --quiet --python .venv/bin/python -r requirements.txt
+echo "      done"
 
-ARCH="$(uname -m)"
-if [ "$ARCH" = "arm64" ]; then
-  echo "Apple Silicon detected — installing the MLX (GPU) separation engine..."
-  pip install -q -r requirements.txt
-else
-  echo "Intel Mac detected — installing the CPU separation engine..."
-  pip install -q stable-ts faster-whisper fastapi "uvicorn[standard]" python-multipart "audio-separator[cpu]"
-  # Tell the app to use the cross-platform engine
-  /usr/bin/sed -i '' 's/^SEPARATOR_ENGINE = .*/SEPARATOR_ENGINE = "cpu"/' config.py
-fi
-echo "OK  Dependencies installed"
-
-# 4. Download models and verify end to end
-echo ""
-echo "Downloading models and verifying (first time only, needs internet)..."
-GRADIO_ANALYTICS_ENABLED=False python warmup.py
+echo "[2/3] Downloading the AI models and doing a test run…"
+echo "      (first time only — roughly 2 GB, can take 5–20 minutes)"
+.venv/bin/python warmup.py
 
 echo ""
-echo "=== Install complete. Start the app anytime with start.sh (or: python app.py) ==="
+echo "[3/3] All set."
+echo ""
+echo "  ✓ PASS — installation complete."
+echo "  From now on, just double-click  Start.command  to use the app."
+echo ""

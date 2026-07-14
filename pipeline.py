@@ -7,6 +7,7 @@ All logic lives here; app.py is UI-only. Also runnable from the CLI:
 
 import json
 import logging
+import os
 import re
 import shutil
 import subprocess
@@ -21,6 +22,10 @@ import config
 ROOT = Path(__file__).parent
 JOBS_DIR = ROOT / "jobs"
 MODELS_DIR = ROOT / "models"
+
+# Keep all downloaded models inside the app folder — the install is fully
+# self-contained and deleting the folder removes everything.
+os.environ.setdefault("HF_HOME", str(MODELS_DIR / "hf"))
 
 ACCEPTED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac"}
 

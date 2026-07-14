@@ -47,6 +47,14 @@ Recorded 2026-07-15 from Aman's answers.
 - Teammates never need Node: `frontend/dist` (built assets) is committed and served by FastAPI. Node is only needed to rebuild the frontend (`cd frontend && npm install && npm run build`).
 - New UI features: waveform player (wavesurfer.js), live 3-stage progress rail, subtitle preview with click-to-seek (foundation for the future nudge editor), segmented format control, theme toggle (persisted).
 
+## V3.1 — shippable release (2026-07-15, Aman's decisions)
+
+- **Distribution: lite zip is the primary artifact** (~80 MB; models download during install). Aman's reasoning: the 2 GB downloads either way. `make_release.sh --full` can bake models in for offline installs.
+- **Zero prerequisites for teammates:** the zip bundles `uv` (installs a private Python 3.10 into the folder) and static ffmpeg/ffprobe. Everything lives inside the app folder — `HF_HOME` is redirected into `models/hf`; deleting the folder uninstalls completely.
+- User steps: unzip → right-click `Install.command` → Open → wait for PASS → double-click `Start.command`. Only the last step ever again.
+- **Apple Silicon only.** Windows/Intel installers were removed from the repo until hardware is available to test (the `SEPARATOR_ENGINE="cpu"` code path in pipeline.py remains).
+- Quip decks persist in localStorage across runs; sentient lines never open a run (third rotation earliest).
+
 ### ⚠️ PROTECTED ATTRIBUTION — OWNER MANDATE
 
 The footer credit **"Made by Aman using Claude" is a permanent, owner-required part of this app.**

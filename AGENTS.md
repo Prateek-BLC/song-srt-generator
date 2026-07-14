@@ -17,12 +17,12 @@ This app takes an AI-generated song + its ground-truth lyrics and produces a tim
 
 ## 3. Environment
 
-The scripted way (preferred): run `bash install.command` (macOS) or `install.bat` (Windows). It does everything in this section and section 4, platform-aware. Manual equivalent:
+The scripted way (preferred): run `bash install.command` — zero prerequisites on Apple Silicon; it uses the bundled `bin/uv` to create a private Python 3.10 venv inside the folder, installs pinned deps, and runs warmup. (In a git checkout without `bin/`, run `./make_release.sh` once to fetch the bundled tools, or do the manual steps below.) Manual equivalent:
 
 - `python3.11 -m venv .venv` (or 3.10)
 - Activate: `source .venv/bin/activate` (Mac/Linux) or `.venv\Scripts\activate.bat` (Windows)
 - **Apple Silicon Mac:** `pip install -r requirements.txt` (pinned; includes the MLX GPU separation engine). Keep `SEPARATOR_ENGINE = "mlx"` in config.py.
-- **Windows / Intel Mac:** install the CPU torch wheel explicitly first if default resolution fails: `pip install torch --index-url https://download.pytorch.org/whl/cpu`, then `pip install stable-ts faster-whisper fastapi "uvicorn[standard]" python-multipart "audio-separator[cpu]"`, and set `SEPARATOR_ENGINE = "cpu"` in config.py. (requirements.txt is the Apple Silicon pin set — don't use it on Windows.)
+- **Windows / Intel Mac (future, untested):** the `SEPARATOR_ENGINE = "cpu"` path in pipeline.py uses the `audio-separator` package; installers were removed until hardware is available (see DECISIONS.md V3.1).
 
 ## 4. First-run verification
 
@@ -30,7 +30,7 @@ Run `python warmup.py`. It downloads the separation and alignment models (~2 GB 
 
 ## 5. Launch
 
-`python app.py` — the browser opens automatically at http://127.0.0.1:7860. Every later use: run `start.sh` / `start.bat` or `python app.py` again. One job runs at a time; a second submit queues.
+`python app.py` — the browser opens automatically at http://127.0.0.1:7860. Every later use: run `start.command` or `python app.py` again. One job runs at a time; a second submit queues.
 
 ## 6. Troubleshooting
 
