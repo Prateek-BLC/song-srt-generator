@@ -22,7 +22,7 @@ Recorded 2026-07-15 from Aman's answers.
 
 - **Aligner:** stable-ts `align()` kept (its forced-alignment API is still best-fit), but running on the **faster-whisper backend** (`load_faster_whisper`) for 2–4× speed. Note: stable-ts repo was archived May 2026 — versions are pinned; acceptable for a local offline tool.
 - **Vocal separation:** platform-abstracted `separate_vocals()` interface instead of hard-coded Demucs.
-  - **Apple Silicon (build target):** `mlx-audio-separator` (MLX / Apple GPU). Model choice (RoFormer vs htdemucs) decided by benchmark at Milestone 2 on the sample clip.
+  - **Apple Silicon (build target):** `mlx-audio-separator` (MLX / Apple GPU). **Benchmark result (M2, 17 s sample clip, M4 Pro): htdemucs separates in 1.9–2.0 s with instant model load; BS-RoFormer takes 6.9 s to separate and much longer to load. Alignment quality was perfect with htdemucs vocals. Locked: `htdemucs.yaml`.** RoFormer remains a one-line `SEPARATOR_MODEL` config swap if stem audio quality ever matters more than speed.
   - **Windows / Intel (future):** `audio-separator` package, same RoFormer model family → same output quality, CPU speed. Code path written defensively but **untested until Windows hardware is available**.
 - **Compute:** CPU-only for alignment in V1 (no CUDA setup, no MPS for torch). Separation uses MLX GPU on Apple Silicon.
 

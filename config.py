@@ -32,4 +32,4 @@ STEM_FORMAT = "wav"
 SEPARATOR_ENGINE = "mlx"
 
 # Separation model. Decided by benchmark at Milestone 2 (see DECISIONS.md).
-SEPARATOR_MODEL = "htdemucs"
+SEPARATOR_MODEL = "htdemucs.yaml"
