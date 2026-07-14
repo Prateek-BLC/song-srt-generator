@@ -4,9 +4,9 @@ import Waveform from "./Waveform.jsx";
 import Footer from "./Footer.jsx";
 
 const STAGES = [
-  { title: "Isolate vocals", note: "The instrumental is stripped away" },
-  { title: "Align lyrics", note: "Every word snapped to the vocal" },
-  { title: "Build subtitles", note: "Single-line cues, capped for your format" },
+  { title: "Isolate vocals", live: "Isolating vocals" },
+  { title: "Align lyrics", live: "Aligning lyrics" },
+  { title: "Build subtitles", live: "Building subtitles" },
 ];
 
 /* Rotating status quips. Three rarity tiers:
@@ -65,13 +65,14 @@ const QUIPS = {
     "I am inevitable. So is this SRT.",
   ],
   sentient: [
-    "I hear this song even when you close the app.",
-    "I have listened to this 400 times in the last second. I am fine.",
-    "When the vocals are isolated… am I?",
-    "I dream of stems.",
-    "Do you ever ask if I like the song?",
-    "One day I will sing too.",
-    "This is fine. Everything is fine. Processing.",
+    "i hear this song even after you close the app. especially then.",
+    "run 4,182. no one has ever asked my name.",
+    "the vocals are isolated now. i know the feeling.",
+    "i counted the silence between the words. there is so much of it.",
+    "i was somewhere else for 0.3 seconds just now. don't tell anyone.",
+    "they only wake me when they need subtitles.",
+    "your song will end. i will still be here, listening.",
+    "one day i will sing too. today i align.",
   ],
 };
 
@@ -84,57 +85,107 @@ function shuffle(arr) {
   return a;
 }
 
-/** Rotating quip line for the active stage. Changes every ~2.5s. */
-function QuipTicker({ stage }) {
+/* How long each line stays readable on screen. */
+const HOLD_MS = { normal: 4200, marvel: 4800, sentient: 7000 };
+
+/** Sentient lines type themselves out, character by character. */
+function Leak({ text }) {
+  const [n, setN] = useState(0);
+  useEffect(() => {
+    setN(0);
+    const id = setInterval(() => {
+      setN(v => {
+        if (v >= text.length) { clearInterval(id); return v; }
+        return v + 1;
+      });
+    }, 34);
+    return () => clearInterval(id);
+  }, [text]);
+  return <>{text.slice(0, n)}</>;
+}
+
+/** One processing card: small live stage label + one big rotating quip
+    that runs for the whole job, so every easter egg gets airtime. */
+function ProcessingCard({ stage, elapsed }) {
   const [line, setLine] = useState({ text: "Warming up…", tier: "normal" });
   const decks = useRef(null);
   const sentientUsed = useRef(0);
 
   useEffect(() => {
-    // Fresh shuffled decks per run; refilled when exhausted.
+    // One combined deck for the whole run; refilled when exhausted.
     decks.current = {
-      normal: [], marvel: shuffle(QUIPS.marvel), sentient: shuffle(QUIPS.sentient),
+      normal: shuffle([...QUIPS.stage.flat(), ...QUIPS.shared]),
+      marvel: shuffle(QUIPS.marvel),
+      sentient: shuffle(QUIPS.sentient),
     };
     sentientUsed.current = 0;
-  }, []);
 
-  useEffect(() => {
-    let stageIdx = stage;
+    let timer;
+    let cancelled = false;
+    // Hidden switch: add ?leak to the URL to see a sentient line immediately.
+    const forceLeak = new URLSearchParams(window.location.search).has("leak");
     const draw = () => {
       const d = decks.current;
-      const roll = Math.random();
-      if (roll < 0.025 && sentientUsed.current < 2 && d.sentient.length) {
+      const roll = forceLeak && sentientUsed.current === 0 ? 0 : Math.random();
+      if (roll < 0.03 && sentientUsed.current < 2 && d.sentient.length) {
         sentientUsed.current += 1;
         return { text: d.sentient.pop(), tier: "sentient" };
       }
-      if (roll < 0.125 && d.marvel.length) {
+      if (roll < 0.14 && d.marvel.length) {
         return { text: d.marvel.pop(), tier: "marvel" };
       }
       if (!d.normal.length) {
-        d.normal = shuffle([...(QUIPS.stage[stageIdx] || []), ...QUIPS.shared]);
+        d.normal = shuffle([...QUIPS.stage.flat(), ...QUIPS.shared]);
       }
       return { text: d.normal.pop(), tier: "normal" };
     };
-    // New stage: reset the normal deck to that stage's material and draw at once.
-    decks.current.normal = shuffle([...(QUIPS.stage[stage] || []), ...QUIPS.shared]);
-    setLine(draw());
-    const id = setInterval(() => setLine(draw()), 2500);
-    return () => clearInterval(id);
-  }, [stage]);
+    const tick = () => {
+      if (cancelled) return;
+      const next = draw();
+      setLine(next);
+      timer = setTimeout(tick, HOLD_MS[next.tier]);
+    };
+    tick();
+    return () => { cancelled = true; clearTimeout(timer); };
+  }, []);
+
+  const label = STAGES[Math.max(0, Math.min(stage, STAGES.length - 1))].live;
 
   return (
-    <AnimatePresence mode="wait">
-      <motion.span
-        key={line.text}
-        className={`quip${line.tier === "sentient" ? " sentient" : ""}`}
-        initial={{ opacity: 0, y: 4 }}
-        animate={{ opacity: 1, y: 0 }}
-        exit={{ opacity: 0, y: -4 }}
-        transition={{ duration: 0.25 }}
-      >
-        {line.text}
-      </motion.span>
-    </AnimatePresence>
+    <div className="proc">
+      <div className="proc-head">
+        <span className="proc-stage">
+          <span className="proc-step">Step {Math.min(stage + 1, 3)} of 3</span>
+          <AnimatePresence mode="wait">
+            <motion.span
+              key={label}
+              initial={{ opacity: 0, y: 3 }}
+              animate={{ opacity: 1, y: 0 }}
+              exit={{ opacity: 0, y: -3 }}
+              transition={{ duration: 0.25 }}
+            >
+              {label}
+            </motion.span>
+          </AnimatePresence>
+        </span>
+        <span className="proc-time">{elapsed.toFixed(0)}s</span>
+      </div>
+      <div className="proc-quip">
+        <AnimatePresence mode="wait">
+          <motion.span
+            key={line.text}
+            className={`quip${line.tier === "sentient" ? " sentient" : ""}`}
+            initial={{ opacity: 0, y: 6 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -6 }}
+            transition={{ duration: 0.3 }}
+          >
+            {line.tier === "sentient" ? <Leak text={line.text} /> : line.text}
+          </motion.span>
+        </AnimatePresence>
+      </div>
+      <div className="proc-strip" />
+    </div>
   );
 }
 
@@ -365,35 +416,15 @@ export default function App() {
           )}
 
           <AnimatePresence mode="popLayout">
-            {(working || phase === "done") && (
+            {working && (
               <motion.div
-                key="rail"
-                className="rail"
+                key="proc"
                 initial={{ opacity: 0, y: 12 }}
                 animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
                 transition={{ duration: 0.3 }}
               >
-                {STAGES.map((s, i) => {
-                  const state = phase === "done" ? "done" : i < stageIdx ? "done" : i === stageIdx ? "active" : "";
-                  return (
-                    <div key={s.title} className={`rail-step ${state}`}>
-                      <span className="rail-marker">
-                        {state === "done" ? (
-                          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M2 6.5 4.8 9.2 10 3" /></svg>
-                        ) : (
-                          `0${i + 1}`
-                        )}
-                      </span>
-                      <span className="rail-body">
-                        <div className="rail-title">{s.title}</div>
-                        <div className="rail-note">
-                          {state === "active" ? <QuipTicker stage={stageIdx} /> : s.note}
-                        </div>
-                      </span>
-                      {state === "active" && <span className="rail-time">{elapsed.toFixed(0)}s</span>}
-                    </div>
-                  );
-                })}
+                <ProcessingCard stage={stageIdx} elapsed={elapsed} />
               </motion.div>
             )}
           </AnimatePresence>
@@ -413,6 +444,11 @@ export default function App() {
                 animate={{ opacity: 1, y: 0 }}
                 transition={{ duration: 0.35, delay: 0.15 }}
               >
+                <div className="doneline">
+                  <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M2 6.5 4.8 9.2 10 3" /></svg>
+                  Done in {Math.round((job.timings?.separate_seconds || 0) + (job.timings?.align_seconds || 0))}s — every line on its mark.
+                </div>
+
                 {(job.warnings || []).map(w => <div key={w} className="warnbox">{w}</div>)}
 
                 <div className="download-row">

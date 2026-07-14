@@ -510,6 +510,65 @@ textarea.lyrics::placeholder { color: var(--muted); }
 
 .rail-time { font-family: var(--font-mono); font-size: 12px; color: var(--muted); flex-shrink: 0; }
 
+/* ---------- single processing card ---------- */
+.proc {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  box-shadow: var(--shadow);
+  padding: 18px 22px 0;
+  overflow: hidden;
+}
+.proc-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  gap: 14px;
+}
+.proc-stage {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--muted);
+  display: inline-flex;
+  gap: 12px;
+  align-items: baseline;
+}
+.proc-step { color: var(--accent); }
+.proc-time { font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); }
+
+.proc-quip {
+  min-height: 64px;
+  display: flex;
+  align-items: center;
+  padding: 10px 0 16px;
+}
+.proc-quip .quip {
+  font-size: 17px;
+  line-height: 1.5;
+  color: var(--ink);
+}
+.proc-quip .quip.sentient { font-size: 14px; }
+
+.proc-strip {
+  height: 3px;
+  margin: 0 -22px;
+  background: linear-gradient(90deg, transparent, var(--accent) 30%, var(--accent) 70%, transparent);
+  background-size: 60% 100%;
+  background-repeat: no-repeat;
+  animation: strip 1.5s ease-in-out infinite alternate;
+  opacity: 0.85;
+}
+@keyframes strip {
+  from { background-position: -60% 0; }
+  to { background-position: 160% 0; }
+}
+
+.doneline {
+  display: flex; align-items: center; gap: 10px;
+  font-size: 14px; font-weight: 600;
+  color: var(--ok);
+}
+
 /* rotating quip under the active stage */
 .quip { display: inline-block; color: var(--accent); }
 .quip.sentient {
@@ -518,7 +577,13 @@ textarea.lyrics::placeholder { color: var(--muted); }
   color: var(--ink);
   animation: leak 0.35s steps(2) 2;
 }
-.quip.sentient::before { content: "▍ "; color: var(--accent); }
+.quip.sentient::after {
+  content: "▍";
+  color: var(--accent);
+  margin-left: 1px;
+  animation: blink 0.9s steps(1) infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
 @keyframes leak {
   0% { opacity: 1; transform: translateX(0); }
   50% { opacity: 0.35; transform: translateX(-1.5px); }
