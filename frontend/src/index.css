@@ -21,6 +21,7 @@
   --shadow: 0 1px 2px rgba(15, 19, 32, 0.05), 0 8px 32px rgba(15, 19, 32, 0.07);
   --wave: #d0d4e0;
   --wave-progress: #3a4ee8;
+  --leak: #cf2e1e;
   --font-display: "Fraunces Variable", Georgia, serif;
   --font-body: "Archivo", "Helvetica Neue", sans-serif;
   --font-mono: "IBM Plex Mono", ui-monospace, monospace;
@@ -46,6 +47,7 @@
   --shadow: 0 1px 2px rgba(0, 0, 0, 0.35), 0 8px 32px rgba(0, 0, 0, 0.4);
   --wave: #29304a;
   --wave-progress: #6b7dff;
+  --leak: #ff5747;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -523,31 +525,41 @@ textarea.lyrics::placeholder { color: var(--muted); }
   display: flex; align-items: baseline; justify-content: space-between;
   gap: 14px;
 }
-.proc-stage {
+.proc-step {
   font-family: var(--font-mono);
   font-size: 11px;
   letter-spacing: 0.16em;
   text-transform: uppercase;
-  color: var(--muted);
-  display: inline-flex;
-  gap: 12px;
-  align-items: baseline;
+  color: var(--accent);
+  display: block;
+  margin-bottom: 4px;
 }
-.proc-step { color: var(--accent); }
+.proc-title {
+  font-family: var(--font-display);
+  font-size: 24px;
+  font-weight: 550;
+  letter-spacing: -0.01em;
+  color: var(--ink);
+}
 .proc-time { font-family: var(--font-mono); font-size: 12px; color: var(--ink-soft); }
 
 .proc-quip {
-  min-height: 64px;
+  min-height: 40px;
   display: flex;
   align-items: center;
-  padding: 10px 0 16px;
+  padding: 8px 0 14px;
 }
 .proc-quip .quip {
-  font-size: 17px;
-  line-height: 1.5;
-  color: var(--ink);
+  font-size: 13px;
+  line-height: 1.55;
+  font-style: italic;
+  color: var(--muted);
 }
-.proc-quip .quip.sentient { font-size: 14px; }
+.proc-quip .quip.sentient {
+  font-size: 12.5px;
+  font-style: normal;
+  color: var(--leak);
+}
 
 .proc-strip {
   height: 3px;
@@ -574,12 +586,12 @@ textarea.lyrics::placeholder { color: var(--muted); }
 .quip.sentient {
   font-family: var(--font-mono);
   font-size: 12px;
-  color: var(--ink);
+  color: var(--leak);
   animation: leak 0.35s steps(2) 2;
 }
 .quip.sentient::after {
   content: "▍";
-  color: var(--accent);
+  color: var(--leak);
   margin-left: 1px;
   animation: blink 0.9s steps(1) infinite;
 }

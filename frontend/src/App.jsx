@@ -154,20 +154,21 @@ function ProcessingCard({ stage, elapsed }) {
   return (
     <div className="proc">
       <div className="proc-head">
-        <span className="proc-stage">
+        <div>
           <span className="proc-step">Step {Math.min(stage + 1, 3)} of 3</span>
           <AnimatePresence mode="wait">
-            <motion.span
+            <motion.h3
               key={label}
-              initial={{ opacity: 0, y: 3 }}
+              className="proc-title"
+              initial={{ opacity: 0, y: 4 }}
               animate={{ opacity: 1, y: 0 }}
-              exit={{ opacity: 0, y: -3 }}
+              exit={{ opacity: 0, y: -4 }}
               transition={{ duration: 0.25 }}
             >
               {label}
-            </motion.span>
+            </motion.h3>
           </AnimatePresence>
-        </span>
+        </div>
         <span className="proc-time">{elapsed.toFixed(0)}s</span>
       </div>
       <div className="proc-quip">
