@@ -41,6 +41,7 @@ if [ ! -x "bin/uv" ] || [ ! -x "bin/ffmpeg" ] || [ ! -x "bin/ffprobe" ]; then
 fi
 export PATH="$DIR/bin:$PATH"
 export UV_PYTHON_INSTALL_DIR="$DIR/.python"
+export UV_PYTHON_PREFERENCE="only-managed"
 export UV_CACHE_DIR="$DIR/.uv-cache"
 export HF_HOME="$DIR/models/hf"
 
