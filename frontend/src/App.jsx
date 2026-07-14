@@ -104,40 +104,55 @@ function Leak({ text }) {
   return <>{text.slice(0, n)}</>;
 }
 
-/** One processing card: small live stage label + one big rotating quip
+/* Decks persist in localStorage so consecutive runs continue where the shuffle
+   left off — no quip repeats until its whole pool has been played. */
+const DECK_KEY = "srt-quip-decks-v1";
+
+function loadDecks() {
+  try {
+    const d = JSON.parse(localStorage.getItem(DECK_KEY));
+    if (d && [d.normal, d.marvel, d.sentient].every(Array.isArray)) return d;
+  } catch { /* fresh decks below */ }
+  return { normal: [], marvel: [], sentient: [] };
+}
+
+function saveDecks(d) {
+  try { localStorage.setItem(DECK_KEY, JSON.stringify(d)); } catch { /* private mode */ }
+}
+
+/** One processing card: small live stage label + one rotating quip line
     that runs for the whole job, so every easter egg gets airtime. */
 function ProcessingCard({ stage, elapsed }) {
   const [line, setLine] = useState({ text: "Warming up…", tier: "normal" });
-  const decks = useRef(null);
-  const sentientUsed = useRef(0);
 
   useEffect(() => {
-    // One combined deck for the whole run; refilled when exhausted.
-    decks.current = {
-      normal: shuffle([...QUIPS.stage.flat(), ...QUIPS.shared]),
-      marvel: shuffle(QUIPS.marvel),
-      sentient: shuffle(QUIPS.sentient),
-    };
-    sentientUsed.current = 0;
-
+    const decks = loadDecks();
+    let sentientUsed = 0;
+    let rotation = 0;
     let timer;
     let cancelled = false;
-    // Hidden switch: add ?leak to the URL to see a sentient line immediately.
-    const forceLeak = new URLSearchParams(window.location.search).has("leak");
+    // Hidden dev switch: ?leak guarantees a sentient line on the third rotation.
+    let forceLeak = new URLSearchParams(window.location.search).has("leak");
+
+    const pop = (tier, refill) => {
+      if (!decks[tier].length) decks[tier] = shuffle(refill());
+      const text = decks[tier].pop();
+      saveDecks(decks);
+      return { text, tier };
+    };
     const draw = () => {
-      const d = decks.current;
-      const roll = forceLeak && sentientUsed.current === 0 ? 0 : Math.random();
-      if (roll < 0.03 && sentientUsed.current < 2 && d.sentient.length) {
-        sentientUsed.current += 1;
-        return { text: d.sentient.pop(), tier: "sentient" };
+      const n = rotation++;
+      const roll = Math.random();
+      // Sentient never opens a run: possible only from the third rotation on.
+      if (n >= 2 && sentientUsed < 2 && (forceLeak || roll < 0.03)) {
+        forceLeak = false;
+        sentientUsed += 1;
+        return pop("sentient", () => QUIPS.sentient);
       }
-      if (roll < 0.14 && d.marvel.length) {
-        return { text: d.marvel.pop(), tier: "marvel" };
+      if (n >= 1 && roll < 0.14) {
+        return pop("marvel", () => QUIPS.marvel);
       }
-      if (!d.normal.length) {
-        d.normal = shuffle([...QUIPS.stage.flat(), ...QUIPS.shared]);
-      }
-      return { text: d.normal.pop(), tier: "normal" };
+      return pop("normal", () => [...QUIPS.stage.flat(), ...QUIPS.shared]);
     };
     const tick = () => {
       if (cancelled) return;
