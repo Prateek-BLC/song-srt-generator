@@ -7,8 +7,8 @@ Upload an AI-generated song plus the lyrics it was written from — get back a p
 Nothing needs to be pre-installed. Not even Python.
 
 1. Unzip the release zip.
-2. Right-click `Install.command` → **Open** → **Open**. Wait for **PASS** (first time 5–20 min — it sets up a private Python, ffmpeg, and the AI models, all *inside this folder*; your Mac is otherwise untouched).
-3. Done. To uninstall, delete the folder.
+2. Open Terminal, type `bash ` (with a space), drag `Install.command` into the window, press Enter. Wait for **PASS** (first time 5–20 min — it sets up a private Python, ffmpeg, and the AI models, all *inside this folder*; your Mac is otherwise untouched). Terminal is used because macOS Gatekeeper blocks double-clicked unsigned scripts ("Apple could not verify…"); the blocked-dialog escape hatch is System Settings → Privacy & Security → "Open Anyway".
+3. Done. To uninstall, delete the folder. (`Start.command` double-clicks cleanly — the installer removes the quarantine flags.)
 
 Building a release zip from this repo: `./make_release.sh <version>` (add `--full` to bake the models in for offline installs).
 

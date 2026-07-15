@@ -56,13 +56,26 @@ chmod +x "$STAGE/Install.command" "$STAGE/Start.command" "$STAGE"/bin/*
 cat > "$STAGE/READ ME FIRST.txt" <<'EOF'
 SONG SRT GENERATOR — HOW TO INSTALL (Apple Silicon Macs)
 
-1. RIGHT-CLICK "Install.command" and choose Open. Click Open again.
-   Wait for the window to say PASS. (First time takes 5–20 minutes —
-   it downloads the AI models. Leave the window alone.)
+STEP 1 — install (one time, 3 small moves):
+   a. Open Terminal: press Cmd+Space, type "terminal", press Enter.
+   b. In the Terminal window type exactly:   bash
+      then a SPACE, then DRAG the file "Install.command" from this
+      folder into the Terminal window (its path appears by itself).
+   c. Press Enter. Wait for the window to say PASS.
+      (First time takes 5–20 minutes — it downloads the AI models.
+      Leave the window alone until PASS.)
 
-2. Double-click "Start.command". Your browser opens with the app.
+STEP 2 — use it:
+   Double-click "Start.command". Your browser opens with the app.
 
 That's it. From tomorrow on, only step 2.
+
+WHY THE WEIRD TERMINAL STEP? If you double-click Install.command instead,
+macOS shows "Apple could not verify…" and blocks it — that's just Apple's
+warning for any app not from the App Store. Running it through Terminal
+skips that. (Alternative if you already double-clicked and got blocked:
+click Done — NOT Move to Bin — then System Settings > Privacy & Security,
+scroll down, click "Open Anyway", and it will run.)
 
 Everything installs inside this folder only. To uninstall, delete the folder.
 If the installer says anything other than PASS, send Aman a screenshot.
