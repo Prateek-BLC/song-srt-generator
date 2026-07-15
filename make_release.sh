@@ -96,4 +96,4 @@ echo "==> Zipping"
 SIZE=$(du -h "dist-release/${NAME}.zip" | cut -f1)
 echo ""
 echo "✓ dist-release/${NAME}.zip  (${SIZE})"
-echo "  Share the zip. Teammate steps: unzip → right-click Install.command → Start.command"
+echo "  Share the zip. Teammate steps: unzip → Terminal: bash Install.command → Start.command"
