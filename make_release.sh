@@ -19,7 +19,11 @@ for arg in "${@:2}"; do
 done
 
 NAME="Song-SRT-Generator-${VERSION}-${PLATFORM}-${VARIANT}"
-STAGE="dist-release/${NAME}"
+# Windows: short inner folder name — deep paths inside .venv/models can hit
+# Windows' 260-character path limit if the user unzips somewhere nested.
+FOLDER="$NAME"
+[ "$PLATFORM" = "win" ] && FOLDER="Song-SRT-Generator"
+STAGE="dist-release/${FOLDER}"
 ASSETS="release-assets"
 
 echo "==> Building ${NAME}"
@@ -82,6 +86,15 @@ else
   cp "$ASSETS/uv.exe" "$ASSETS/ffmpeg.exe" "$ASSETS/ffprobe.exe" "$STAGE/bin/"
   cp install.bat "$STAGE/Install.bat"
   cp start.bat "$STAGE/Start.bat"
+  # Guard: .bat files MUST be CRLF + ASCII or cmd.exe breaks silently.
+  for bat in "$STAGE/Install.bat" "$STAGE/Start.bat"; do
+    if ! file "$bat" | grep -q "CRLF"; then
+      echo "!! $bat is not CRLF — refusing to ship a broken batch file"; exit 1
+    fi
+    if ! file "$bat" | grep -q "ASCII"; then
+      echo "!! $bat contains non-ASCII characters — refusing to ship"; exit 1
+    fi
+  done
   # Windows uses the cross-platform CPU separation engine.
   sed -i '' 's/^SEPARATOR_ENGINE = .*/SEPARATOR_ENGINE = "cpu"/' "$STAGE/config.py"
 fi
@@ -118,6 +131,10 @@ else
 cat > "$STAGE/READ ME FIRST.txt" <<'EOF'
 SONG SRT GENERATOR - HOW TO INSTALL (Windows, 64-bit)
 
+STEP 0 - put this whole folder somewhere simple first:
+   your Desktop or Documents. (Not buried inside many nested folders -
+   Windows has a path-length limit that can break the install.)
+
 STEP 1 - install (one time):
    Double-click "Install.bat".
    If Windows shows a blue "Windows protected your PC" box:
@@ -153,7 +170,7 @@ fi
 
 # 5. Zip it
 echo "==> Zipping"
-(cd dist-release && rm -f "${NAME}.zip" && zip -rq "${NAME}.zip" "$NAME")
+(cd dist-release && rm -f "${NAME}.zip" && zip -rq "${NAME}.zip" "$FOLDER")
 SIZE=$(du -h "dist-release/${NAME}.zip" | cut -f1)
 echo ""
 echo "✓ dist-release/${NAME}.zip  (${SIZE})"

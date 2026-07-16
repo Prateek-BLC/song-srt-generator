@@ -3,6 +3,7 @@ REM Start the Song SRT Generator. Run Install.bat once first.
 cd /d "%~dp0"
 set "PATH=%~dp0bin;%PATH%"
 set "HF_HOME=%~dp0models\hf"
+set "PYTHONUTF8=1"
 
 if not exist ".venv\Scripts\python.exe" (
   echo The app isn't installed yet. Double-click Install.bat first.

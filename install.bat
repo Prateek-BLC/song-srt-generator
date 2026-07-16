@@ -1,13 +1,14 @@
 @echo off
 REM Song SRT Generator - one-time installer for Windows (x64).
-REM Everything installs INSIDE this folder. Nothing on your PC is touched.
+REM Everything installs INSIDE this folder. Nothing on your PC is touched
+REM (except one standard Microsoft component, if it's missing).
 REM Needs internet once (Python runtime + AI models). Safe to re-run anytime.
-setlocal EnableDelayedExpansion
+setlocal
 cd /d "%~dp0"
 
 echo.
 echo   Song SRT Generator - installing
-echo   Everything stays inside this folder. Nothing else on your PC is touched.
+echo   Everything stays inside this folder.
 echo.
 
 REM Only 64-bit Intel/AMD Windows is supported in this build.
@@ -28,13 +29,29 @@ set "UV_PYTHON_INSTALL_DIR=%~dp0.python"
 set "UV_PYTHON_PREFERENCE=only-managed"
 set "UV_CACHE_DIR=%~dp0.uv-cache"
 set "HF_HOME=%~dp0models\hf"
+set "PYTHONUTF8=1"
+
+REM The AI engine needs Microsoft's standard C++ runtime. Most PCs have it;
+REM install it quietly if this one doesn't.
+set "NEEDVC="
+if not exist "%SystemRoot%\System32\vcruntime140.dll" set "NEEDVC=1"
+if not exist "%SystemRoot%\System32\msvcp140.dll" set "NEEDVC=1"
+if defined NEEDVC (
+  echo [0/3] Installing a small standard Microsoft component...
+  echo       If Windows asks "allow this app to make changes?", click Yes.
+  curl -sL -o "%TEMP%\vc_redist.x64.exe" https://aka.ms/vc_redist.x64.exe
+  "%TEMP%\vc_redist.x64.exe" /install /passive /norestart
+)
+if not exist "%SystemRoot%\System32\vcruntime140.dll" goto :vcfail
 
 echo [1/3] Setting up the app's private Python...
 if not exist ".venv\Scripts\python.exe" (
   bin\uv.exe venv --quiet --python 3.10 .venv
   if errorlevel 1 goto :fail
 )
-bin\uv.exe pip install --quiet --python .venv\Scripts\python.exe -r requirements-windows.txt
+echo       Now downloading the app's components - progress below.
+echo       (Several minutes. The window is NOT stuck.)
+bin\uv.exe pip install --python .venv\Scripts\python.exe -r requirements-windows.txt
 if errorlevel 1 goto :fail
 echo       done
 
@@ -55,6 +72,14 @@ exit /b 0
 :missingbin
 echo X The bin folder is missing from this download.
 echo   Re-download the zip from Aman and unzip it again.
+pause
+exit /b 1
+
+:vcfail
+echo X Couldn't install the Microsoft component automatically.
+echo   Open this link in your browser, run the file it downloads,
+echo   then double-click this installer again:
+echo   https://aka.ms/vc_redist.x64.exe
 pause
 exit /b 1
 
