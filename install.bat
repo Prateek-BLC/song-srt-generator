@@ -1,12 +1,12 @@
 @echo off
-REM Song SRT Generator — one-time installer for Windows (x64).
+REM Song SRT Generator - one-time installer for Windows (x64).
 REM Everything installs INSIDE this folder. Nothing on your PC is touched.
 REM Needs internet once (Python runtime + AI models). Safe to re-run anytime.
 setlocal EnableDelayedExpansion
 cd /d "%~dp0"
 
 echo.
-echo   Song SRT Generator — installing
+echo   Song SRT Generator - installing
 echo   Everything stays inside this folder. Nothing else on your PC is touched.
 echo.
 
@@ -39,14 +39,14 @@ if errorlevel 1 goto :fail
 echo       done
 
 echo [2/3] Downloading the AI models and doing a test run...
-echo       (first time only — roughly 2 GB, can take 10-30 minutes)
+echo       (first time only - roughly 2 GB, can take 10-30 minutes)
 .venv\Scripts\python.exe warmup.py
 if errorlevel 1 goto :fail
 
 echo.
 echo [3/3] All set.
 echo.
-echo   PASS — installation complete.
+echo   PASS - installation complete.
 echo   From now on, just double-click  Start.bat  to use the app.
 echo.
 pause
@@ -60,7 +60,7 @@ exit /b 1
 
 :fail
 echo.
-echo X Something didn't finish. No harm done — your PC is unchanged.
+echo X Something didn't finish. No harm done - your PC is unchanged.
 echo   1^) Check your internet connection
 echo   2^) Double-click this installer again ^(it continues where it stopped^)
 echo   3^) Still stuck? Send Aman a photo of this window.

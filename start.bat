@@ -10,7 +10,7 @@ if not exist ".venv\Scripts\python.exe" (
   exit /b 1
 )
 
-echo Starting Song SRT Generator — your browser will open in a moment.
+echo Starting Song SRT Generator - your browser will open in a moment.
 echo Keep this window open while you use the app. Close it to stop.
 .venv\Scripts\python.exe app.py
 pause

@@ -116,28 +116,30 @@ If the installer says anything other than PASS, send Aman a screenshot.
 EOF
 else
 cat > "$STAGE/READ ME FIRST.txt" <<'EOF'
-SONG SRT GENERATOR — HOW TO INSTALL (Windows, 64-bit)
+SONG SRT GENERATOR - HOW TO INSTALL (Windows, 64-bit)
 
-STEP 1 — install (one time):
+STEP 1 - install (one time):
    Double-click "Install.bat".
    If Windows shows a blue "Windows protected your PC" box:
    click "More info", then "Run anyway". (That's just Windows'
    warning for any app not from the Microsoft Store.)
    Wait for the window to say PASS.
-   (First time takes 10–30 minutes — it downloads the AI models.
+   (First time takes 10-30 minutes - it downloads the AI models.
    Leave the window alone until PASS.)
 
-STEP 2 — use it:
+STEP 2 - use it:
    Double-click "Start.bat". Your browser opens with the app.
 
 That's it. From tomorrow on, only step 2.
 
-NOTE: on Windows a 3-minute song takes roughly 2–5 minutes to process
+NOTE: on Windows a 3-minute song takes roughly 2-5 minutes to process
 (Macs have a special AI chip for this; Windows PCs do it the slow way).
 
 Everything installs inside this folder only. To uninstall, delete the folder.
 If the installer says anything other than PASS, send Aman a photo of the window.
 EOF
+# Windows text files need CRLF line endings.
+perl -pi -e 's/\n/\r\n/' "$STAGE/READ ME FIRST.txt"
 fi
 
 # 4. Full variant (mac only): bake the models in
