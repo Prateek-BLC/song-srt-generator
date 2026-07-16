@@ -1,0 +1,69 @@
+@echo off
+REM Song SRT Generator — one-time installer for Windows (x64).
+REM Everything installs INSIDE this folder. Nothing on your PC is touched.
+REM Needs internet once (Python runtime + AI models). Safe to re-run anytime.
+setlocal EnableDelayedExpansion
+cd /d "%~dp0"
+
+echo.
+echo   Song SRT Generator — installing
+echo   Everything stays inside this folder. Nothing else on your PC is touched.
+echo.
+
+REM Only 64-bit Intel/AMD Windows is supported in this build.
+if not "%PROCESSOR_ARCHITECTURE%"=="AMD64" (
+  echo X This build is for 64-bit Windows on Intel/AMD.
+  echo   This PC reports: %PROCESSOR_ARCHITECTURE%. Ask Aman for help.
+  pause
+  exit /b 1
+)
+
+REM Bundled tools: uv (installs a private Python), ffmpeg/ffprobe (audio handling).
+if not exist "bin\uv.exe" goto :missingbin
+if not exist "bin\ffmpeg.exe" goto :missingbin
+if not exist "bin\ffprobe.exe" goto :missingbin
+
+set "PATH=%~dp0bin;%PATH%"
+set "UV_PYTHON_INSTALL_DIR=%~dp0.python"
+set "UV_PYTHON_PREFERENCE=only-managed"
+set "UV_CACHE_DIR=%~dp0.uv-cache"
+set "HF_HOME=%~dp0models\hf"
+
+echo [1/3] Setting up the app's private Python...
+if not exist ".venv\Scripts\python.exe" (
+  bin\uv.exe venv --quiet --python 3.10 .venv
+  if errorlevel 1 goto :fail
+)
+bin\uv.exe pip install --quiet --python .venv\Scripts\python.exe -r requirements-windows.txt
+if errorlevel 1 goto :fail
+echo       done
+
+echo [2/3] Downloading the AI models and doing a test run...
+echo       (first time only — roughly 2 GB, can take 10-30 minutes)
+.venv\Scripts\python.exe warmup.py
+if errorlevel 1 goto :fail
+
+echo.
+echo [3/3] All set.
+echo.
+echo   PASS — installation complete.
+echo   From now on, just double-click  Start.bat  to use the app.
+echo.
+pause
+exit /b 0
+
+:missingbin
+echo X The bin folder is missing from this download.
+echo   Re-download the zip from Aman and unzip it again.
+pause
+exit /b 1
+
+:fail
+echo.
+echo X Something didn't finish. No harm done — your PC is unchanged.
+echo   1^) Check your internet connection
+echo   2^) Double-click this installer again ^(it continues where it stopped^)
+echo   3^) Still stuck? Send Aman a photo of this window.
+echo.
+pause
+exit /b 1

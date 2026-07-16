@@ -1,0 +1,10 @@
+# Windows (x64) dependency set — CPU engines only.
+# PyPI's default torch wheels on Windows are CPU builds, which is what we want.
+# NOTE: unpinned until the first successful install on real Windows hardware;
+# pin exact versions after that test (see DECISIONS.md V3.2).
+stable-ts
+faster-whisper
+fastapi
+uvicorn[standard]
+python-multipart
+audio-separator[cpu]

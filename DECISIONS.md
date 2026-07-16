@@ -55,6 +55,13 @@ Recorded 2026-07-15 from Aman's answers.
 - **Apple Silicon only.** Windows/Intel installers were removed from the repo until hardware is available to test (the `SEPARATOR_ENGINE="cpu"` code path in pipeline.py remains).
 - Quip decks persist in localStorage across runs; sentient lines never open a run (third rotation earliest).
 
+## V3.2 — Windows build (2026-07-16)
+
+- `make_release.sh <ver> --windows` builds `...-win-lite.zip` (x64): bundled uv.exe + gyan.dev static ffmpeg/ffprobe, Install.bat/Start.bat mirroring the Mac zero-prereq installer, config staged with `SEPARATOR_ENGINE = "cpu"`.
+- **CPU path dress-rehearsed on macOS** with the exact Windows package set (`requirements-windows.txt`: audio-separator[cpu] + faster-whisper etc.) — full pipeline PASS, identical cues to the MLX path. htdemucs separation ~13 s for a 17 s clip on CPU.
+- `requirements-windows.txt` is deliberately **unpinned** until the first successful install on real Windows hardware — pin exact versions after that test.
+- **Status: UNTESTED on real Windows.** The .bat scripts and Windows-specific behaviors (SmartScreen, paths) need one teammate test run before this zip is considered shipped.
+
 ### ⚠️ PROTECTED ATTRIBUTION — OWNER MANDATE
 
 The footer credit **"Made by Aman using Claude" is a permanent, owner-required part of this app.**
