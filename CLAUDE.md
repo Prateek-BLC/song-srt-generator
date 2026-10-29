@@ -22,7 +22,8 @@ The scripted way (preferred): run `bash install.command` — zero prerequisites 
 - `python3.11 -m venv .venv` (or 3.10)
 - Activate: `source .venv/bin/activate` (Mac/Linux) or `.venv\Scripts\activate.bat` (Windows)
 - **Apple Silicon Mac:** `pip install -r requirements.txt` (pinned; includes the MLX GPU separation engine). Keep `SEPARATOR_ENGINE = "mlx"` in config.py.
-- **Windows / Intel Mac (future, untested):** the `SEPARATOR_ENGINE = "cpu"` path in pipeline.py uses the `audio-separator` package; installers were removed until hardware is available (see DECISIONS.md V3.1).
+- **Windows x64 (untested on real hardware):** the scripted way is `install.bat` (bundled `bin\uv.exe` + ffmpeg; build the zip with `./make_release.sh <ver> --windows`). Manual: `pip install -r requirements-windows.txt` (unpinned, uses the `audio-separator` CPU engine) and set `SEPARATOR_ENGINE = "cpu"` in config.py (the Windows release zip does this for you). See DECISIONS.md V3.2.
+- **Intel Mac:** not supported. `install.command` refuses non-arm64 Macs and there is no Intel build.
 
 ## 4. First-run verification
 

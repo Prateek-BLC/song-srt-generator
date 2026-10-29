@@ -21,6 +21,13 @@ MAX_MINUTES_WARN = 10
 # Refuse to process audio above this many minutes.
 MAX_MINUTES_HARD = 20
 
+# Refuse uploads larger than this many megabytes (a 20-minute 48 kHz 32-bit stereo WAV is ~460 MB).
+MAX_UPLOAD_MB = 500
+
+# Forget finished jobs in the app after this many minutes (download links stop working).
+# Their files stay in jobs/ on disk either way.
+JOB_RETENTION_MINUTES = 120
+
 # Default state of the "Strip [section] tags" checkbox in the UI.
 STRIP_TAGS_DEFAULT = True
 
