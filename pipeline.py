@@ -34,6 +34,8 @@ OVERLAP_GAP = 0.010  # 10 ms pulled between overlapping cues
 
 # Lazily loaded, cached across jobs so only the first run pays model-load time.
 _align_model = None
+_separator = None
+_separator_key = None  # (engine, model) the cached separator was loaded with
 
 
 class PipelineError(Exception):
@@ -85,7 +87,10 @@ def validate_audio(audio_path: Path) -> tuple[float, str | None]:
 # Stage 1: preprocess lyrics
 
 SECTION_TAG = re.compile(r"^\[.*\]$")
-REPEAT_SHORTHAND = re.compile(r"\bx\s?\d+\b", re.IGNORECASE)
+# Only "x2"-style counts (2-99) at the very end of a line, optionally bracketed:
+# "Hold on x2", "Chorus (x3)", "[Chorus x2]". A stray "x 1" or "x5" mid-line
+# ("Malcolm x 3 times") no longer triggers.
+REPEAT_SHORTHAND = re.compile(r"(?:^|[\s(\[])[x×]\s?(?:[2-9]|[1-9]\d)[)\]]?$", re.IGNORECASE)
 
 REPEAT_WARNING = (
     "Possible repeat shorthand like \"x2\" detected in the lyrics. "
@@ -101,10 +106,11 @@ def preprocess_lyrics(raw_text: str, strip_tags: bool = True) -> tuple[list[str]
         line = re.sub(r" {2,}", " ", line.strip())
         if not line:
             continue
-        if strip_tags and SECTION_TAG.match(line):
-            continue
+        # Checked before tag stripping so "[Chorus x2]" still warns.
         if REPEAT_SHORTHAND.search(line):
             warning = REPEAT_WARNING
+        if strip_tags and SECTION_TAG.match(line):
+            continue
         lines.append(line)
     if not lines:
         raise PipelineError(
@@ -136,20 +142,37 @@ def _find_vocals_output(job_dir: Path) -> Path:
     return target
 
 
+def _run_separator(separator_cls, audio_path: Path, job_dir: Path) -> Path:
+    """Separate with a cached separator, loading the model only on first use.
+
+    Both separator packages write stems to output_dir on the separator *and* its
+    model_instance (they swap both themselves for chunked runs), so retarget both
+    to this job's folder.
+    """
+    global _separator, _separator_key
+    key = (config.SEPARATOR_ENGINE, config.SEPARATOR_MODEL)
+    if _separator is None or _separator_key != key:
+        _separator = separator_cls(
+            log_level=logging.INFO,
+            model_file_dir=str(MODELS_DIR),
+            output_dir=str(job_dir),
+            output_format="WAV",
+            output_single_stem="Vocals",
+        )
+        _separator.load_model(model_filename=config.SEPARATOR_MODEL)
+        _separator_key = key
+    _separator.output_dir = str(job_dir)
+    if getattr(_separator, "model_instance", None) is not None:
+        _separator.model_instance.output_dir = str(job_dir)
+    _separator.separate(str(audio_path), custom_output_names={"Vocals": "vocals"})
+    return _find_vocals_output(job_dir)
+
+
 def _separate_mlx(audio_path: Path, job_dir: Path, log: logging.Logger) -> Path:
     """Apple Silicon path: mlx-audio-separator on the GPU."""
     from mlx_audio_separator import Separator
 
-    separator = Separator(
-        log_level=logging.INFO,
-        model_file_dir=str(MODELS_DIR),
-        output_dir=str(job_dir),
-        output_format="WAV",
-        output_single_stem="Vocals",
-    )
-    separator.load_model(model_filename=config.SEPARATOR_MODEL)
-    separator.separate(str(audio_path), custom_output_names={"Vocals": "vocals"})
-    return _find_vocals_output(job_dir)
+    return _run_separator(Separator, audio_path, job_dir)
 
 
 def _separate_cpu(audio_path: Path, job_dir: Path, log: logging.Logger) -> Path:
@@ -164,16 +187,7 @@ def _separate_cpu(audio_path: Path, job_dir: Path, log: logging.Logger) -> Path:
             "The CPU separation engine isn't installed on this machine. "
             "Re-run the installer, or set SEPARATOR_ENGINE in config.py to 'mlx' on Apple Silicon."
         )
-    separator = Separator(
-        log_level=logging.INFO,
-        model_file_dir=str(MODELS_DIR),
-        output_dir=str(job_dir),
-        output_format="WAV",
-        output_single_stem="Vocals",
-    )
-    separator.load_model(model_filename=config.SEPARATOR_MODEL)
-    separator.separate(str(audio_path), custom_output_names={"Vocals": "vocals"})
-    return _find_vocals_output(job_dir)
+    return _run_separator(Separator, audio_path, job_dir)
 
 
 # ---------------------------------------------------------------------------

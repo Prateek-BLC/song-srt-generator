@@ -270,7 +270,13 @@ export default function App() {
       form.append("strip_tags", stripTags);
       form.append("video_format", format);
       const res = await fetch("/api/jobs", { method: "POST", body: form });
-      if (!res.ok) throw new Error("upload failed");
+      if (!res.ok) {
+        const { error } = await res.json().catch(() => ({}));
+        if (!error) throw new Error("upload failed");
+        setPhase("error");
+        setJob({ status: "error", message: error });
+        return;
+      }
       const { job_id } = await res.json();
       pollRef.current = setInterval(async () => {
         try {

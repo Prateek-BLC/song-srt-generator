@@ -14,7 +14,7 @@ import webbrowser
 from pathlib import Path
 
 import uvicorn
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -42,6 +42,22 @@ app = FastAPI(title="Song SRT Generator", docs_url=None, redoc_url=None, openapi
 # In-memory job registry: id -> state dict. Jobs also persist on disk in jobs/.
 JOBS: dict[str, dict] = {}
 _work_queue: "queue.Queue[str]" = queue.Queue()
+
+MAX_UPLOAD_BYTES = config.MAX_UPLOAD_MB * 1024 * 1024
+# Room for the lyrics field and multipart framing on top of the audio file.
+_FORM_OVERHEAD_BYTES = 2 * 1024 * 1024
+UPLOAD_TOO_LARGE = (
+    f"This file is over the {config.MAX_UPLOAD_MB} MB upload limit. "
+    "Export it as MP3 or a shorter WAV and try again."
+)
+
+
+def _evict_finished_jobs():
+    """Drop finished jobs older than JOB_RETENTION_MINUTES from memory (files stay in jobs/)."""
+    cutoff = time.time() - config.JOB_RETENTION_MINUTES * 60
+    for job_id, job in list(JOBS.items()):
+        if job.get("finished", float("inf")) < cutoff:
+            JOBS.pop(job_id, None)
 
 
 def _worker():
@@ -73,11 +89,22 @@ def _worker():
                 "Check the newest folder in jobs/ for the log."
             ))
         finally:
+            job["finished"] = time.time()
             shutil.rmtree(job["upload_dir"], ignore_errors=True)
             _work_queue.task_done()
 
 
 threading.Thread(target=_worker, daemon=True).start()
+
+
+@app.middleware("http")
+async def limit_upload_size(request: Request, call_next):
+    """Reject oversized uploads from Content-Length before the body is read."""
+    if request.method == "POST" and request.url.path == "/api/jobs":
+        length = request.headers.get("content-length", "")
+        if length.isdigit() and int(length) > MAX_UPLOAD_BYTES + _FORM_OVERHEAD_BYTES:
+            return JSONResponse({"error": UPLOAD_TOO_LARGE}, status_code=413)
+    return await call_next(request)
 
 
 @app.get("/api/meta")
@@ -101,13 +128,23 @@ async def create_job(
 ):
     if video_format not in ("vertical", "horizontal"):
         video_format = config.FORMAT_DEFAULT
+    _evict_finished_jobs()
     job_id = uuid.uuid4().hex[:12]
     upload_dir = UPLOADS / job_id
     upload_dir.mkdir(parents=True, exist_ok=True)
     safe_name = Path(audio.filename or "song.wav").name
     audio_path = upload_dir / safe_name
+    # Counted copy: the middleware can't catch uploads sent without Content-Length.
+    written = 0
     with audio_path.open("wb") as f:
-        shutil.copyfileobj(audio.file, f)
+        while chunk := audio.file.read(1024 * 1024):
+            written += len(chunk)
+            if written > MAX_UPLOAD_BYTES:
+                break
+            f.write(chunk)
+    if written > MAX_UPLOAD_BYTES:
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        return JSONResponse({"error": UPLOAD_TOO_LARGE}, status_code=413)
 
     JOBS[job_id] = {
         "status": "queued", "stage": 0, "message": "Waiting for a free slot…",
