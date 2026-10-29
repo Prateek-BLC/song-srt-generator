@@ -18,13 +18,16 @@ Building a release zip from this repo: `./make_release.sh <version>` (add `--ful
 2. Upload the song (MP3, WAV, M4A, or FLAC).
 3. Paste the lyrics exactly as sung — one line becomes one subtitle. Write out every repeated chorus in full. You can also upload a `.txt` to fill the box.
 4. Pick the **video format**: Vertical 9:16 for Reels/TikTok (short subtitle lines, max 25 characters) or Horizontal 16:9 for YouTube (up to 42 characters). Every subtitle is a single line; a comma or full stop in your lyrics always starts a new subtitle — punctuate the lyrics the way the song breathes and the captions will follow.
-5. Click **Generate SRT**, watch the three steps run, then download the SRT (and the isolated vocal stem as a bonus).
+5. Pick the **lyrics language** from the dropdown under the format: English, Spanish, Hindi, Portuguese, French, German, Italian, Punjabi, or Urdu. The app remembers your last choice. The Hindi/Urdu sentence marks (। ॥ ۔ ، ؟) end a subtitle just like a comma or full stop, and a Spanish `¿` or `¡` starts a new one.
+6. Click **Generate SRT**, watch the three steps run, then download the SRT (and the isolated vocal stem as a bonus).
 
 Every job is also saved in the `jobs/` folder (input copy, vocals, SRT, cue data, log). Delete old job folders whenever you like.
 
+From the command line: `python pipeline.py <audio> <lyrics.txt> [vertical|horizontal] [en|es|hi|pt|fr|de|it|pa|ur]` (format and language are optional, in either order).
+
 ## Settings
 
-Open `config.py` in a text editor — each setting has a one-line comment. The useful ones: `MODEL_SIZE` (`"small"` = faster, `"medium"` = more accurate), `STEM_FORMAT` (`"wav"` or `"mp3"`), `PORT`, and `HOST` (set to `"0.0.0.0"` to let teammates on your network use it from their browser).
+Open `config.py` in a text editor — each setting has a one-line comment. The useful ones: `LANGUAGE` (the language preselected in the dropdown), `MODEL_SIZE` (`"small"` = faster, `"medium"` = more accurate), `STEM_FORMAT` (`"wav"` or `"mp3"`), `PORT`, and `HOST` (set to `"0.0.0.0"` to let teammates on your network use it from their browser).
 
 ## If something goes wrong
 

@@ -46,7 +46,7 @@ export default function Footer() {
 
   return (
     <footer className="colophon">
-      <div className="colophon-meta">English lyrics · Runs offline · No accounts · No uploads · No telemetry</div>
+      <div className="colophon-meta">Multi-language lyrics · Runs offline · No accounts · No uploads · No telemetry</div>
       <div className="attribution" ref={ref}>{ATTRIBUTION}</div>
       <div className="colophon-meta">Local audio tool</div>
     </footer>

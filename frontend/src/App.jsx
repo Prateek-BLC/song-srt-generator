@@ -224,6 +224,31 @@ function useTheme() {
   return [theme, () => setTheme(t => (t === "light" ? "dark" : "light"))];
 }
 
+const LANG_KEY = "srt-language";
+
+/** Lyrics language: list and default come from /api/meta; last pick is remembered. */
+function useLanguage() {
+  const [languages, setLanguages] = useState([]);
+  const [language, setLanguage] = useState(() => {
+    try { return localStorage.getItem(LANG_KEY) || ""; } catch { return ""; }
+  });
+  useEffect(() => {
+    fetch("/api/meta")
+      .then(r => r.json())
+      .then(meta => {
+        const list = meta.languages || [];
+        setLanguages(list);
+        setLanguage(l => (list.some(x => x.code === l) ? l : meta.language_default));
+      })
+      .catch(() => { /* server default applies when no language is sent */ });
+  }, []);
+  useEffect(() => {
+    if (!language) return;
+    try { localStorage.setItem(LANG_KEY, language); } catch { /* private mode */ }
+  }, [language]);
+  return [languages, language, setLanguage];
+}
+
 function useElapsed(running) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
@@ -242,6 +267,7 @@ export default function App() {
   const [lyrics, setLyrics] = useState("");
   const [stripTags, setStripTags] = useState(true);
   const [format, setFormat] = useState("vertical");
+  const [languages, language, setLanguage] = useLanguage();
   const [drag, setDrag] = useState(false);
 
   // job: null | {id} ; phase: idle | working | done | error
@@ -269,6 +295,7 @@ export default function App() {
       form.append("lyrics", lyrics);
       form.append("strip_tags", stripTags);
       form.append("video_format", format);
+      if (language) form.append("language", language);
       const res = await fetch("/api/jobs", { method: "POST", body: form });
       if (!res.ok) {
         const { error } = await res.json().catch(() => ({}));
@@ -394,7 +421,7 @@ export default function App() {
               <span className="section-num">03</span>
               <h2 className="section-title">The format</h2>
             </div>
-            <p className="section-hint">Sets how long each subtitle line can be.</p>
+            <p className="section-hint">Sets how long each subtitle line can be, and the language being sung.</p>
             <div className="segmented">
               <button className={`segment${format === "vertical" ? " on" : ""}`} onClick={() => setFormat("vertical")}>
                 <span className="segment-frame v" />
@@ -405,6 +432,16 @@ export default function App() {
                 <span><b>Horizontal 16:9</b><span>YouTube · max 42 chars</span></span>
               </button>
             </div>
+
+            <label className="langpick">
+              <span className="langpick-label">Lyrics language</span>
+              <span className="langpick-field">
+                <select value={language} onChange={e => setLanguage(e.target.value)} disabled={!languages.length}>
+                  {languages.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
+                </select>
+                <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M3 4.5 6 7.5l3-3" /></svg>
+              </span>
+            </label>
 
             <button className="go" disabled={!ready} onClick={generate}>
               {working ? "Working…" : "Generate SRT"}

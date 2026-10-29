@@ -73,7 +73,7 @@ def _worker():
             result = run_pipeline(
                 job["audio_path"], job["lyrics_text"],
                 strip_tags=job["strip_tags"], video_format=job["video_format"],
-                progress_callback=progress,
+                language=job["language"], progress_callback=progress,
             )
             job.update(
                 status="done", message="Done",
@@ -112,6 +112,8 @@ def meta():
     return {
         "attribution": ATTRIBUTION,
         "format_default": config.FORMAT_DEFAULT,
+        "languages": [{"code": code, "name": name} for code, name in config.LANGUAGES],
+        "language_default": config.LANGUAGE,
         "max_chars": {"vertical": config.MAX_CHARS_VERTICAL,
                       "horizontal": config.MAX_CHARS_HORIZONTAL},
         "max_minutes_hard": config.MAX_MINUTES_HARD,
@@ -125,9 +127,12 @@ async def create_job(
     lyrics: str = Form(...),
     strip_tags: bool = Form(True),
     video_format: str = Form(config.FORMAT_DEFAULT),
+    language: str = Form(config.LANGUAGE),
 ):
     if video_format not in ("vertical", "horizontal"):
         video_format = config.FORMAT_DEFAULT
+    if language not in {code for code, _ in config.LANGUAGES}:
+        language = config.LANGUAGE
     _evict_finished_jobs()
     job_id = uuid.uuid4().hex[:12]
     upload_dir = UPLOADS / job_id
@@ -150,7 +155,7 @@ async def create_job(
         "status": "queued", "stage": 0, "message": "Waiting for a free slot…",
         "created": time.time(), "audio_path": str(audio_path),
         "upload_dir": str(upload_dir), "lyrics_text": lyrics,
-        "strip_tags": strip_tags, "video_format": video_format,
+        "strip_tags": strip_tags, "video_format": video_format, "language": language,
     }
     _work_queue.put(job_id)
     return {"job_id": job_id}
