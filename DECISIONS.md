@@ -10,7 +10,7 @@ Recorded 2026-07-15 from Aman's answers.
 3. **Lyric section tags:** Strip lines that are only a bracketed tag like `[Chorus]` (default on, checkbox in UI).
 4. **Repeated choruses:** On-screen warning only when "x2"-style shorthand is detected. Never refuse to run.
 5. **Whisper model:** `medium` via the **faster-whisper** backend of stable-ts. Checked Aman's machine: existing Whisper install is openai-whisper on Python 3.9 with vanilla `.pt` models (incl. large-v3) — different format, not reusable by faster-whisper, and large-v3 would be slower with no alignment-accuracy benefit. App downloads its own CT2 `medium` model once.
-6. **Language:** English only for V1 (`LANGUAGE = "en"` in config).
+6. **Language:** English only for V1 (`LANGUAGE = "en"` in config). *Superseded by V3.4:* language is now picked per job.
 7. **Vocal stem format:** WAV default (Aman: "WAV or MP3 or MPEG all fine" → keeping brief default WAV; switchable via `STEM_FORMAT` in config).
 8. **Job retention:** Keep everything in `jobs/`, manual cleanup.
 9. **Network:** localhost only (127.0.0.1:7860). LAN opt-in later via `HOST` constant.
@@ -72,6 +72,17 @@ Recorded 2026-07-15 from Aman's answers.
 - **Finished jobs are evicted from memory** after `JOB_RETENTION_MINUTES = 120` (config.py), pruned whenever a new job is submitted. Only the in-memory entry goes, so the result's download links then 404. Job folders in `jobs/` are untouched (decision #8 stands).
 - **Stricter "x2" detection** (decision #4 stays warning-only): the count must be 2–99 at the very end of a line, optionally bracketed (`Hold on x2`, `Chorus (x3)`, `[Chorus x2]`, `×2`). It no longer fires on `x1` or on mid-line text like `Malcolm x 3 times`. The check now runs *before* section-tag stripping, so a `[Chorus x2]` line warns rather than vanishing silently. Accepted miss: shorthand in the middle of a line (`Hold on x2 now`).
 - **CLAUDE.md / AGENTS.md §3** no longer say the Windows installers were removed: they now point to `install.bat` / `requirements-windows.txt` (V3.2) and state that Intel Macs are unsupported.
+
+## V3.4 — per-job lyrics language (2026-10-29)
+
+- **Supersedes decision #6 (English only).** Users pick the lyrics language per job from a dropdown under the Vertical/Horizontal control instead of editing config.py. Offered: English, Spanish, Hindi, Portuguese, French, German, Italian, Punjabi, Urdu (`config.LANGUAGES`, Whisper codes). `config.LANGUAGE` stays as the preselected default.
+- `/api/meta` returns `languages` and `language_default`; `/api/jobs` takes a `language` field and silently falls back to the default if the code isn't in the list. `run_pipeline(language=...)` passes it to `align_lyrics()` and records it in `cues.json` and the job log's `Input:` line. CLI: `python pipeline.py <audio> <lyrics.txt> [vertical|horizontal] [code]`, extras in either order.
+- The UI remembers the last pick in localStorage (`srt-language`), validated against the server's list on load.
+- **Cue splitting:** the cue-ending punctuation now includes the Devanagari danda `।` `॥` and Urdu `۔` `،`, plus Urdu `؟` and `؛` (Arabic-script `?` and `;`, same role as the ASCII ones). A word opening with Spanish `¿` or `¡` starts a new cue.
+- **Character caps (25/42) count what's displayed, not code points:** `_display_len()` skips combining marks (Unicode Mn/Mc/Me — Devanagari/Gurmukhi vowel signs, virama, nukta, anusvara) and joiners (Cf). Latin text counts exactly as before. Conjuncts like क्ष still count as two, which slightly over-counts and so stays safely under the cap.
+- **Chinese, Japanese and Thai deliberately not offered:** they don't separate words with spaces, so the word-boundary splitter would produce bad cues. They need their own splitting first.
+- Footer meta text changed from "English lyrics" to "Multi-language lyrics". The attribution line is untouched.
+- Verified: warmup.py PASS (English, unchanged 4 cues); the sample run through the CLI with `es` recorded `"language": "es"` in cues.json and `language=es` in the log.
 
 ### ⚠️ PROTECTED ATTRIBUTION — OWNER MANDATE
 

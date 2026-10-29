@@ -3,8 +3,22 @@
 # Whisper model size for lyric alignment: "small" is ~3x faster, "medium" is more accurate.
 MODEL_SIZE = "medium"
 
-# Lyrics/vocal language (ISO code). V1 is English only.
+# Default lyrics/vocal language (ISO code). Users pick per job in the UI; this is preselected.
 LANGUAGE = "en"
+
+# Languages offered in the UI dropdown as (Whisper code, name). No Chinese/Japanese/Thai yet:
+# they write without spaces and need a different line splitter.
+LANGUAGES = [
+    ("en", "English"),
+    ("es", "Spanish"),
+    ("hi", "Hindi"),
+    ("pt", "Portuguese"),
+    ("fr", "French"),
+    ("de", "German"),
+    ("it", "Italian"),
+    ("pa", "Punjabi"),
+    ("ur", "Urdu"),
+]
 
 # Bind address. "127.0.0.1" = this machine only. "0.0.0.0" = teammates on your LAN can open it.
 HOST = "127.0.0.1"
