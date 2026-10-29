@@ -84,6 +84,14 @@ Recorded 2026-07-15 from Aman's answers.
 - Footer meta text changed from "English lyrics" to "Multi-language lyrics". The attribution line is untouched.
 - Verified: warmup.py PASS (English, unchanged 4 cues); the sample run through the CLI with `es` recorded `"language": "es"` in cues.json and `language=es` in the log.
 
+## V3.5 — Hinglish option (2026-10-29)
+
+- **"Hinglish" added to the dropdown**, right after English and Hindi (order is now English, Hindi, Hinglish, then the rest; Hindi moved up from third to sit next to it). It's for Hindi lyrics written in Roman script.
+- Whisper has no Hinglish code, so `config.LANGUAGE_ALIASES = {"hinglish": "en"}` maps the choice to the code used for alignment. `run_pipeline` resolves the alias; everything else (API validation, localStorage, CLI) treats `hinglish` as a normal choice.
+- **Both are recorded:** `cues.json` has `"language"` (the choice, e.g. `"hinglish"`) and `"whisper_language"` (the code used, e.g. `"en"`); the job log's `Input:` line reads `language=hinglish (whisper code en)`. Non-alias choices record the same value in both.
+- **Real-song test (Aman):** "Kabhi Kabhi Aditi" with Roman-script lyrics, aligned with English selected — timing was perfect. That is the basis for mapping Hinglish to `en` rather than `hi` (the Hindi model expects Devanagari text).
+- CLI accepts `hinglish` like any other code. `frontend/dist` was rebuilt; the dropdown reads its list from `/api/meta`, so no frontend source change was needed.
+
 ### ⚠️ PROTECTED ATTRIBUTION — OWNER MANDATE
 
 The footer credit **"Made by Aman using Claude" is a permanent, owner-required part of this app.**
