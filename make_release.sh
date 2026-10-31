@@ -93,7 +93,7 @@ if [ "$PLATFORM" = "mac" ]; then
   cp macapp/launcher "$APP/Contents/MacOS/launcher"
   cp macapp/launcher.py macapp/progress.html macapp/AppIcon.icns "$RES/"
   cp "$ASSETS/uv" "$ASSETS/ffmpeg" "$ASSETS/ffprobe" "$RES/bin/"
-  cp app.py pipeline.py config.py warmup.py VERSION requirements.txt README.md DECISIONS.md "$RES/app/"
+  cp app.py pipeline.py transliterate.py config.py warmup.py VERSION requirements.txt README.md DECISIONS.md "$RES/app/"
   cp -R sample "$RES/app/sample"
   cp -R frontend/dist "$RES/app/frontend/dist"
   chmod +x "$APP/Contents/MacOS/launcher" "$RES"/bin/*
@@ -129,7 +129,7 @@ If the setup window shows an error, click "Show the log" and send Aman the file.
 EOF
 else
   mkdir -p "$STAGE/bin" "$STAGE/frontend"
-  cp app.py pipeline.py config.py warmup.py VERSION README.md DECISIONS.md "$STAGE/"
+  cp app.py pipeline.py transliterate.py config.py warmup.py VERSION README.md DECISIONS.md "$STAGE/"
   cp -R sample "$STAGE/sample"
   cp -R frontend/dist "$STAGE/frontend/dist"
   cp requirements-windows.txt "$STAGE/"

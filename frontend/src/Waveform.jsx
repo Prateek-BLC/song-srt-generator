@@ -8,8 +8,9 @@ function fmt(t) {
   return `${m}:${s}`;
 }
 
-/** Scrubbable waveform of the selected song. Exposes seekTo(seconds) via ref. */
-const Waveform = forwardRef(function Waveform({ file, scanning, onTime }, ref) {
+/** Scrubbable waveform. source: the picked File, or a URL (a video's extracted audio).
+    Exposes seekTo(seconds) via ref. */
+const Waveform = forwardRef(function Waveform({ source, name, scanning, onTime }, ref) {
   const holderRef = useRef(null);
   const wsRef = useRef(null);
   const [playing, setPlaying] = useState(false);
@@ -17,7 +18,7 @@ const Waveform = forwardRef(function Waveform({ file, scanning, onTime }, ref) {
   const [duration, setDuration] = useState(0);
 
   useEffect(() => {
-    if (!file || !holderRef.current) return;
+    if (!source || !holderRef.current) return;
     const styles = getComputedStyle(document.documentElement);
     const ws = WaveSurfer.create({
       container: holderRef.current,
@@ -31,16 +32,17 @@ const Waveform = forwardRef(function Waveform({ file, scanning, onTime }, ref) {
       barRadius: 2,
       normalize: true,
     });
-    const url = URL.createObjectURL(file);
+    const isFile = typeof source !== "string";
+    const url = isFile ? URL.createObjectURL(source) : source;
     ws.load(url);
     ws.on("ready", () => setDuration(ws.getDuration()));
     ws.on("play", () => setPlaying(true));
     ws.on("pause", () => setPlaying(false));
     ws.on("timeupdate", (t) => { setTime(t); onTime && onTime(t); });
     wsRef.current = ws;
-    return () => { ws.destroy(); URL.revokeObjectURL(url); wsRef.current = null; };
+    return () => { ws.destroy(); if (isFile) URL.revokeObjectURL(url); wsRef.current = null; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [file]);
+  }, [source]);
 
   // Recolor on theme change without reloading audio
   useEffect(() => {
@@ -90,7 +92,7 @@ const Waveform = forwardRef(function Waveform({ file, scanning, onTime }, ref) {
             <svg width="13" height="13" viewBox="0 0 12 12" fill="currentColor"><path d="M2 1.2c0-.8.9-1.3 1.6-.9l8 4.8c.7.4.7 1.4 0 1.8l-8 4.8c-.7.4-1.6-.1-1.6-.9V1.2z"/></svg>
           )}
         </button>
-        <span className="player-name">{file?.name}</span>
+        <span className="player-name">{name}</span>
       </div>
     </div>
   );

@@ -2,6 +2,10 @@
 
 Serves the built React frontend (frontend/dist) and a small JSON API.
 Jobs run one at a time on a single worker thread, matching the V1 queue rule.
+
+Lyrics/script mode: POST /api/jobs runs the whole flow. Transcribe mode: POST
+/api/transcribe stops at a draft (status "draft"); POST /api/jobs/{id}/approve
+queues the alignment of the edited text against the same job's audio.
 """
 
 import json
@@ -22,7 +26,9 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import config
-from pipeline import DATA_DIR, PipelineError, run_pipeline
+from pipeline import (ACCEPTED_EXTENSIONS, AUTO_LANGUAGE, CONTENT_TYPES, DATA_DIR,
+                      DEFAULT_SCRIPT, SCRIPT_CODES, PipelineError, align_and_write, flow_steps,
+                      is_video, make_reporter, preprocess_lyrics, run_transcription, start_job)
 
 ROOT = Path(__file__).parent
 DIST = ROOT / "frontend" / "dist"
@@ -53,12 +59,18 @@ JOBS: dict[str, dict] = {}
 _work_queue: "queue.Queue[str]" = queue.Queue()
 
 MAX_UPLOAD_BYTES = config.MAX_UPLOAD_MB * 1024 * 1024
+MAX_VIDEO_UPLOAD_BYTES = config.MAX_VIDEO_UPLOAD_MB * 1024 * 1024
 # Room for the lyrics field and multipart framing on top of the audio file.
 _FORM_OVERHEAD_BYTES = 2 * 1024 * 1024
 UPLOAD_TOO_LARGE = (
-    f"This file is over the {config.MAX_UPLOAD_MB} MB upload limit. "
+    f"This file is over the {config.MAX_UPLOAD_MB} MB upload limit for audio. "
     "Export it as MP3 or a shorter WAV and try again."
 )
+VIDEO_TOO_LARGE = (
+    f"This video is over the {config.MAX_VIDEO_UPLOAD_MB // 1024} GB upload limit. "
+    "Export a smaller copy, or just its audio, and try again."
+)
+UPLOAD_PATHS = ("/api/jobs", "/api/transcribe")
 
 
 def _evict_finished_jobs():
@@ -69,32 +81,50 @@ def _evict_finished_jobs():
             JOBS.pop(job_id, None)
 
 
+def _run_job(job: dict):
+    """Run the job's next phase. task: "lyrics" (whole flow), "transcribe" (up to the
+    draft) or "align" (approved draft → SRT, reusing the job's audio and vocals)."""
+    def progress(step, total, message):
+        job.update(stage=step, message=message)
+
+    steps = flow_steps(job["mode"], job["content_type"])
+    report = make_reporter(steps, progress)
+    if job["task"] == "lyrics":
+        preprocess_lyrics(job["lyrics_text"], strip_tags=job["strip_tags"])  # fail fast
+    if job["task"] in ("lyrics", "transcribe"):
+        job["ctx"] = start_job(job["audio_path"], job["content_type"], report)
+        job["audio_ready"] = True
+        shutil.rmtree(job["upload_dir"], ignore_errors=True)
+    ctx = job["ctx"]
+    if job["task"] == "transcribe":
+        draft = run_transcription(ctx, job["language"], report, job["script"])
+        job.update(status="draft", message="Draft ready", timings=dict(ctx["timings"]),
+                   warnings=list(ctx["warnings"]), job_dir=ctx["job_dir"].name, **draft)
+        return
+    result = align_and_write(ctx, job["lyrics_text"], strip_tags=job["strip_tags"],
+                             video_format=job["video_format"], language=job["language"],
+                             report=report)
+    job.update(
+        status="done", message="Done",
+        srt_path=str(result["srt_path"]),
+        stem_path=str(result["stem_path"]) if result["stem_path"] else None,
+        srt_name=result["srt_path"].name, job_dir=result["job_dir"].name,
+        cues=result["cues"], timings=result["timings"], warnings=result["warnings"],
+    )
+
+
 def _worker():
     while True:
         job_id = _work_queue.get()
         job = JOBS[job_id]
-        job.update(status="running", stage=1, message="Isolating vocals…")
-
-        def progress(step, total, message):
-            job.update(stage=step, message=message)
-
+        job.update(status="running")
         try:
-            result = run_pipeline(
-                job["audio_path"], job["lyrics_text"],
-                strip_tags=job["strip_tags"], video_format=job["video_format"],
-                language=job["language"], progress_callback=progress,
-            )
-            job.update(
-                status="done", message="Done",
-                srt_path=str(result["srt_path"]), stem_path=str(result["stem_path"]),
-                srt_name=result["srt_path"].name, job_dir=result["job_dir"].name,
-                cues=result["cues"], timings=result["timings"], warnings=result["warnings"],
-            )
+            _run_job(job)
         except PipelineError as e:
             job.update(status="error", message=str(e))
         except Exception:
             job.update(status="error", message=(
-                "Something went wrong while processing this song. "
+                "Something went wrong while processing this file. "
                 "Check the newest folder in jobs/ for the log."
             ))
         finally:
@@ -109,10 +139,12 @@ threading.Thread(target=_worker, daemon=True).start()
 @app.middleware("http")
 async def limit_upload_size(request: Request, call_next):
     """Reject oversized uploads from Content-Length before the body is read."""
-    if request.method == "POST" and request.url.path == "/api/jobs":
+    if request.method == "POST" and request.url.path in UPLOAD_PATHS:
+        # The file type isn't known yet here, so this applies the larger (video) limit;
+        # the counted copy in _save_upload enforces the audio limit for audio files.
         length = request.headers.get("content-length", "")
-        if length.isdigit() and int(length) > MAX_UPLOAD_BYTES + _FORM_OVERHEAD_BYTES:
-            return JSONResponse({"error": UPLOAD_TOO_LARGE}, status_code=413)
+        if length.isdigit() and int(length) > MAX_VIDEO_UPLOAD_BYTES + _FORM_OVERHEAD_BYTES:
+            return JSONResponse({"error": VIDEO_TOO_LARGE}, status_code=413)
     return await call_next(request)
 
 
@@ -123,6 +155,10 @@ def meta():
         "format_default": config.FORMAT_DEFAULT,
         "languages": [{"code": code, "name": name} for code, name in config.LANGUAGES],
         "language_default": config.LANGUAGE,
+        "transcribe_language_default": config.TRANSCRIBE_LANGUAGE,
+        "scripts": [{"code": code, "name": name} for code, name in config.SCRIPTS],
+        "accepted_extensions": sorted(ACCEPTED_EXTENSIONS),
+        "max_upload_mb": {"audio": config.MAX_UPLOAD_MB, "video": config.MAX_VIDEO_UPLOAD_MB},
         "max_chars": {"vertical": config.MAX_CHARS_VERTICAL,
                       "horizontal": config.MAX_CHARS_HORIZONTAL},
         "max_minutes_hard": config.MAX_MINUTES_HARD,
@@ -168,6 +204,50 @@ def focus():
     return {"ok": True}
 
 
+def _save_upload(audio: UploadFile):
+    """Stream the upload into uploads/<id>/. Returns (job_id, upload_dir, path) or an error response."""
+    job_id = uuid.uuid4().hex[:12]
+    upload_dir = UPLOADS / job_id
+    upload_dir.mkdir(parents=True, exist_ok=True)
+    safe_name = Path(audio.filename or "song.wav").name
+    audio_path = upload_dir / safe_name
+    video = is_video(audio_path)
+    limit = MAX_VIDEO_UPLOAD_BYTES if video else MAX_UPLOAD_BYTES
+    # Counted copy: the middleware can't catch uploads sent without Content-Length.
+    written = 0
+    with audio_path.open("wb") as f:
+        while chunk := audio.file.read(1024 * 1024):
+            written += len(chunk)
+            if written > limit:
+                break
+            f.write(chunk)
+    if written > limit:
+        shutil.rmtree(upload_dir, ignore_errors=True)
+        return JSONResponse({"error": VIDEO_TOO_LARGE if video else UPLOAD_TOO_LARGE},
+                            status_code=413)
+    return job_id, upload_dir, audio_path
+
+
+def _clean_choices(video_format: str, language: str, content_type: str, default_language: str):
+    if video_format not in ("vertical", "horizontal"):
+        video_format = config.FORMAT_DEFAULT
+    if language not in {code for code, _ in config.LANGUAGES}:
+        language = default_language
+    if content_type not in CONTENT_TYPES:
+        content_type = "song"
+    return video_format, language, content_type
+
+
+def _queue(job_id: str, job: dict):
+    steps = flow_steps(job["mode"], job["content_type"])
+    job.update(status="queued", message="Waiting for a free slot…",
+               steps=[title for _, title in steps])
+    job.setdefault("stage", 0)
+    JOBS[job_id] = job
+    _work_queue.put(job_id)
+    return {"job_id": job_id}
+
+
 @app.post("/api/jobs")
 async def create_job(
     audio: UploadFile = File(...),
@@ -175,41 +255,74 @@ async def create_job(
     strip_tags: bool = Form(True),
     video_format: str = Form(config.FORMAT_DEFAULT),
     language: str = Form(config.LANGUAGE),
+    content_type: str = Form("song"),
 ):
-    if video_format not in ("vertical", "horizontal"):
-        video_format = config.FORMAT_DEFAULT
-    if language not in {code for code, _ in config.LANGUAGES}:
-        language = config.LANGUAGE
+    """Lyrics/script mode: the whole flow in one job."""
+    video_format, language, content_type = _clean_choices(
+        video_format, language, content_type, config.LANGUAGE)
     _evict_finished_jobs()
-    job_id = uuid.uuid4().hex[:12]
-    upload_dir = UPLOADS / job_id
-    upload_dir.mkdir(parents=True, exist_ok=True)
-    safe_name = Path(audio.filename or "song.wav").name
-    audio_path = upload_dir / safe_name
-    # Counted copy: the middleware can't catch uploads sent without Content-Length.
-    written = 0
-    with audio_path.open("wb") as f:
-        while chunk := audio.file.read(1024 * 1024):
-            written += len(chunk)
-            if written > MAX_UPLOAD_BYTES:
-                break
-            f.write(chunk)
-    if written > MAX_UPLOAD_BYTES:
-        shutil.rmtree(upload_dir, ignore_errors=True)
-        return JSONResponse({"error": UPLOAD_TOO_LARGE}, status_code=413)
-
-    JOBS[job_id] = {
-        "status": "queued", "stage": 0, "message": "Waiting for a free slot…",
-        "created": time.time(), "audio_path": str(audio_path),
-        "upload_dir": str(upload_dir), "lyrics_text": lyrics,
+    saved = _save_upload(audio)
+    if isinstance(saved, JSONResponse):
+        return saved
+    job_id, upload_dir, audio_path = saved
+    return _queue(job_id, {
+        "task": "lyrics", "mode": "lyrics", "created": time.time(),
+        "audio_path": str(audio_path), "upload_dir": str(upload_dir), "lyrics_text": lyrics,
         "strip_tags": strip_tags, "video_format": video_format, "language": language,
-    }
-    _work_queue.put(job_id)
-    return {"job_id": job_id}
+        "content_type": content_type,
+    })
 
 
-PUBLIC_KEYS = ("status", "stage", "message", "srt_name", "job_dir",
-               "cues", "timings", "warnings")
+@app.post("/api/transcribe")
+async def create_transcription(
+    audio: UploadFile = File(...),
+    language: str = Form(config.TRANSCRIBE_LANGUAGE),
+    content_type: str = Form("song"),
+    script: str = Form(DEFAULT_SCRIPT),
+):
+    """Transcribe mode, phase 1: prepare the audio (and vocals) and return a Whisper draft.
+
+    script: a config.SCRIPTS code, or "default" when the user has no saved choice."""
+    _, language, content_type = _clean_choices(
+        config.FORMAT_DEFAULT, language, content_type, config.TRANSCRIBE_LANGUAGE)
+    _evict_finished_jobs()
+    saved = _save_upload(audio)
+    if isinstance(saved, JSONResponse):
+        return saved
+    job_id, upload_dir, audio_path = saved
+    return _queue(job_id, {
+        "task": "transcribe", "mode": "transcribe", "created": time.time(),
+        "audio_path": str(audio_path), "upload_dir": str(upload_dir),
+        "language": language, "content_type": content_type,
+        "script": script if script in SCRIPT_CODES else DEFAULT_SCRIPT,
+    })
+
+
+@app.post("/api/jobs/{job_id}/approve")
+def approve_transcript(
+    job_id: str,
+    lyrics: str = Form(...),
+    strip_tags: bool = Form(False),
+    video_format: str = Form(config.FORMAT_DEFAULT),
+    language: str = Form(AUTO_LANGUAGE),
+):
+    """Transcribe mode, phase 2: align the approved text to the audio prepared in phase 1."""
+    job = JOBS.get(job_id)
+    if not job or job.get("status") not in ("draft", "done", "error") or "ctx" not in job:
+        return JSONResponse({"error": "This transcript has expired. Transcribe the file again."},
+                            status_code=409)
+    video_format, language, _ = _clean_choices(
+        video_format, language, job["content_type"], AUTO_LANGUAGE)
+    job.pop("finished", None)
+    job.update(task="align", stage=job.get("stage", 2), lyrics_text=lyrics,
+               strip_tags=strip_tags, video_format=video_format, language=language)
+    return _queue(job_id, job)
+
+
+PUBLIC_KEYS = ("status", "stage", "steps", "message", "mode", "content_type", "srt_name",
+               "job_dir", "cues", "timings", "warnings", "audio_ready", "draft_text",
+               "detected_language", "detected_language_name", "script", "approximate_timing",
+               "script_note")
 
 
 @app.get("/api/jobs/{job_id}")
@@ -217,12 +330,14 @@ def job_state(job_id: str):
     job = JOBS.get(job_id)
     if not job:
         return JSONResponse({"error": "unknown job"}, status_code=404)
-    return {k: job[k] for k in PUBLIC_KEYS if k in job}
+    state = {k: job[k] for k in PUBLIC_KEYS if k in job}
+    state["has_vocals"] = bool(job.get("ctx", {}).get("vocals_path"))
+    return state
 
 
 def _job_file(job_id: str, key: str, media_type: str, filename: str):
     job = JOBS.get(job_id)
-    if not job or job.get("status") != "done":
+    if not job or job.get("status") != "done" or not job.get(key):
         return JSONResponse({"error": "not ready"}, status_code=404)
     return FileResponse(job[key], media_type=media_type, filename=filename)
 
@@ -239,6 +354,18 @@ def download_vocals(job_id: str):
     ext = Path(job.get("stem_path", "vocals.wav")).suffix
     return _job_file(job_id, "stem_path", "audio/wav" if ext == ".wav" else "audio/mpeg",
                      f"vocals{ext}")
+
+
+@app.get("/api/jobs/{job_id}/audio")
+def job_audio(job_id: str):
+    """The job's audio (extracted from a video if needed), for the waveform player."""
+    ctx = JOBS.get(job_id, {}).get("ctx")
+    if not ctx:
+        return JSONResponse({"error": "not ready"}, status_code=404)
+    path = ctx["input_audio"]
+    media = {".wav": "audio/wav", ".mp3": "audio/mpeg", ".m4a": "audio/mp4",
+             ".flac": "audio/flac"}.get(path.suffix, "application/octet-stream")
+    return FileResponse(path, media_type=media)
 
 
 app.mount("/", StaticFiles(directory=str(DIST), html=True), name="frontend")

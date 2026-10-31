@@ -8,3 +8,4 @@ fastapi
 uvicorn[standard]
 python-multipart
 audio-separator[cpu]
+aksharamukha==2.3  # Hinglish transliteration (pinned; V3.8)

@@ -3,11 +3,17 @@ import { AnimatePresence, motion } from "motion/react";
 import Waveform from "./Waveform.jsx";
 import Footer from "./Footer.jsx";
 
-const STAGES = [
-  { title: "Isolate vocals", live: "Isolating vocals" },
-  { title: "Align lyrics", live: "Aligning lyrics" },
-  { title: "Build subtitles", live: "Building subtitles" },
-];
+/* Step titles come from the server per flow (job.steps); this maps them to the
+   live label shown while the step runs. */
+const LIVE_LABELS = {
+  "Isolate vocals": "Isolating vocals",
+  "Prepare audio": "Preparing audio",
+  "Transcribe": "Transcribing",
+  "Align lyrics": "Aligning lyrics",
+  "Align transcript": "Aligning transcript",
+  "Build subtitles": "Building subtitles",
+};
+const DEFAULT_STEPS = ["Isolate vocals", "Align lyrics", "Build subtitles"];
 
 /* Rotating status quips. Three rarity tiers:
    stage/shared → normal rotation · marvel → occasional easter egg ·
@@ -33,6 +39,12 @@ const QUIPS = {
       "The AI is listening to your song on repeat. It has no choice.",
       "Placing words with more care than your last hook placement.",
       "Listening closer than anyone has ever listened to this song.",
+    ],
+    [ // transcribing
+      "Writing down every word so you don't have to.",
+      "Whisper is listening. Whisper is judging your mic placement.",
+      "Drafting a transcript faster than you can find the pause button.",
+      "Turning 'um' into nothing. You're welcome.",
     ],
     [ // 3 — building subtitles
       "One line per cue. Retention experts, you may breathe.",
@@ -122,7 +134,7 @@ function saveDecks(d) {
 
 /** One processing card: small live stage label + one rotating quip line
     that runs for the whole job, so every easter egg gets airtime. */
-function ProcessingCard({ stage, elapsed }) {
+function ProcessingCard({ steps, stage, elapsed }) {
   const [line, setLine] = useState({ text: "Warming up…", tier: "normal" });
 
   useEffect(() => {
@@ -164,13 +176,14 @@ function ProcessingCard({ stage, elapsed }) {
     return () => { cancelled = true; clearTimeout(timer); };
   }, []);
 
-  const label = STAGES[Math.max(0, Math.min(stage, STAGES.length - 1))].live;
+  const title = steps[Math.max(0, Math.min(stage, steps.length - 1))];
+  const label = LIVE_LABELS[title] || title;
 
   return (
     <div className="proc">
       <div className="proc-head">
         <div>
-          <span className="proc-step">Step {Math.min(stage + 1, 3)} of 3</span>
+          <span className="proc-step">Step {Math.min(stage + 1, steps.length)} of {steps.length}</span>
           <AnimatePresence mode="wait">
             <motion.h3
               key={label}
@@ -206,7 +219,11 @@ function ProcessingCard({ stage, elapsed }) {
 }
 
 const LYRICS_PLACEHOLDER =
-  "Paste lyrics exactly as they are sung.\nWrite out every repeated chorus in full.\nOne line here becomes one subtitle —\nand a comma or full stop always starts a new one.";
+  "Paste the lyrics or script exactly as sung or spoken.\nWrite out every repeated chorus in full.\nOne line here becomes one subtitle —\nand a comma or full stop always starts a new one.";
+const DRAFT_PLACEHOLDER =
+  "Click Transcribe. Whisper's draft appears here,\none line per phrase, for you to correct\nbefore the subtitles are timed.";
+const VIDEO_EXT = /\.(mp4|mov|mkv|webm)$/i;
+const ACCEPT = ".mp3,.wav,.m4a,.flac,.mp4,.mov,.mkv,.webm,audio/*,video/mp4,video/quicktime,video/x-matroska,video/webm";
 
 function fmtCue(t) {
   const m = Math.floor(t / 60).toString().padStart(2, "0");
@@ -224,29 +241,45 @@ function useTheme() {
   return [theme, () => setTheme(t => (t === "light" ? "dark" : "light"))];
 }
 
-const LANG_KEY = "srt-language";
+const LANG_KEYS = { lyrics: "srt-language", transcribe: "srt-language-transcribe" };
+const SCRIPT_KEY = "srt-script";
+/* With no saved "Lyrics script" choice the server decides after hearing the audio:
+   Hinglish for Hindi or Urdu, otherwise the same script as the audio. */
+const AUTO_SCRIPT = "default";
 
-/** Lyrics language: list and default come from /api/meta; last pick is remembered. */
-function useLanguage() {
+function stored(key, fallback) {
+  try { return localStorage.getItem(key) || fallback; } catch { return fallback; }
+}
+function store(key, value) {
+  try { localStorage.setItem(key, value); } catch { /* private mode */ }
+}
+
+/** Language per mode: list and defaults come from /api/meta; each mode remembers its last pick
+    (lyrics mode defaults to English, transcribe mode to Auto-detect). */
+function useLanguage(mode) {
   const [languages, setLanguages] = useState([]);
-  const [language, setLanguage] = useState(() => {
-    try { return localStorage.getItem(LANG_KEY) || ""; } catch { return ""; }
-  });
+  const [picks, setPicks] = useState(() => ({
+    lyrics: stored(LANG_KEYS.lyrics, ""), transcribe: stored(LANG_KEYS.transcribe, ""),
+  }));
   useEffect(() => {
     fetch("/api/meta")
       .then(r => r.json())
       .then(meta => {
         const list = meta.languages || [];
+        const ok = code => list.some(x => x.code === code);
         setLanguages(list);
-        setLanguage(l => (list.some(x => x.code === l) ? l : meta.language_default));
+        setPicks(p => ({
+          lyrics: ok(p.lyrics) ? p.lyrics : meta.language_default,
+          transcribe: ok(p.transcribe) ? p.transcribe : meta.transcribe_language_default,
+        }));
       })
       .catch(() => { /* server default applies when no language is sent */ });
   }, []);
   useEffect(() => {
-    if (!language) return;
-    try { localStorage.setItem(LANG_KEY, language); } catch { /* private mode */ }
-  }, [language]);
-  return [languages, language, setLanguage];
+    for (const m of ["lyrics", "transcribe"]) if (picks[m]) store(LANG_KEYS[m], picks[m]);
+  }, [picks]);
+  const setLanguage = code => setPicks(p => ({ ...p, [mode]: code }));
+  return [languages, picks[mode], setLanguage];
 }
 
 /** App version from /api/meta, plus a newer GitHub release if the server found one. */
@@ -277,17 +310,22 @@ function useElapsed(running) {
 
 export default function App() {
   const [theme, toggleTheme] = useTheme();
+  const [mode, setModeState] = useState(() => stored("srt-mode", "lyrics"));
+  const [contentType, setContentTypeState] = useState(() => stored("srt-content-type", "song"));
   const [file, setFile] = useState(null);
   const [lyrics, setLyrics] = useState("");
   const [stripTags, setStripTags] = useState(true);
   const [format, setFormat] = useState("vertical");
-  const [languages, language, setLanguage] = useLanguage();
+  const [languages, language, setLanguage] = useLanguage(mode);
   const [version, update] = useVersionInfo();
+  const [scripts, setScripts] = useState([]);
+  const [scriptPick, setScriptPick] = useState(() => stored(SCRIPT_KEY, AUTO_SCRIPT));
   const [drag, setDrag] = useState(false);
 
-  // job: null | {id} ; phase: idle | working | done | error
+  // phase: idle | working | draft | done | error
   const [phase, setPhase] = useState("idle");
-  const [job, setJob] = useState(null); // server state object
+  const [job, setJob] = useState(null); // server state object (+ id)
+  const [draft, setDraft] = useState(null); // transcribe mode: {language, note, script, approximate}
   const [playTime, setPlayTime] = useState(0);
 
   const waveRef = useRef(null);
@@ -296,51 +334,115 @@ export default function App() {
   const pollRef = useRef(null);
 
   const working = phase === "working";
+  const transcribing = mode === "transcribe";
   const elapsed = useElapsed(working);
+  const isVideo = file && VIDEO_EXT.test(file.name);
 
   useEffect(() => () => clearInterval(pollRef.current), []);
+  useEffect(() => {
+    fetch("/api/meta").then(r => r.json()).then(m => setScripts(m.scripts || [])).catch(() => {});
+  }, []);
 
-  async function generate() {
-    if (!file || !lyrics.trim() || working) return;
+  function pickScript(code) {
+    setScriptPick(code);
+    store(SCRIPT_KEY, code); // only explicit picks are remembered
+  }
+
+  function resetRun() {
+    clearInterval(pollRef.current);
+    setPhase("idle");
+    setJob(null);
+    setDraft(null);
+  }
+
+  function setMode(m) {
+    if (working || m === mode) return;
+    setModeState(m);
+    store("srt-mode", m);
+    resetRun();
+    setLyrics("");
+  }
+
+  function setContentType(c) {
+    if (working || c === contentType) return;
+    setContentTypeState(c);
+    store("srt-content-type", c);
+    if (transcribing) { resetRun(); setLyrics(""); }
+  }
+
+  /** Poll a job until it stops running; onSettled gets the final state. */
+  function poll(jobId, onSettled) {
+    clearInterval(pollRef.current);
+    pollRef.current = setInterval(async () => {
+      try {
+        const s = await (await fetch(`/api/jobs/${jobId}`)).json();
+        setJob({ ...s, id: jobId });
+        if (["done", "error", "draft"].includes(s.status)) {
+          clearInterval(pollRef.current);
+          onSettled(s);
+        }
+      } catch { /* server briefly busy; keep polling */ }
+    }, 500);
+  }
+
+  /** POST a form and start polling the job it creates (or re-queues). */
+  async function submit(url, fields, onSettled) {
     setPhase("working");
-    setJob({ status: "queued", stage: 0, message: "Uploading…" });
+    setJob(j => ({ ...(j || {}), status: "queued", message: "Uploading…" }));
     try {
       const form = new FormData();
-      form.append("audio", file);
-      form.append("lyrics", lyrics);
-      form.append("strip_tags", stripTags);
-      form.append("video_format", format);
-      if (language) form.append("language", language);
-      const res = await fetch("/api/jobs", { method: "POST", body: form });
+      for (const [k, v] of Object.entries(fields)) if (v !== undefined && v !== "") form.append(k, v);
+      const res = await fetch(url, { method: "POST", body: form });
       if (!res.ok) {
         const { error } = await res.json().catch(() => ({}));
         if (!error) throw new Error("upload failed");
         setPhase("error");
-        setJob({ status: "error", message: error });
+        setJob(j => ({ ...(j || {}), status: "error", message: error }));
         return;
       }
       const { job_id } = await res.json();
-      pollRef.current = setInterval(async () => {
-        try {
-          const s = await (await fetch(`/api/jobs/${job_id}`)).json();
-          setJob({ ...s, id: job_id });
-          if (s.status === "done" || s.status === "error") {
-            clearInterval(pollRef.current);
-            setPhase(s.status);
-          }
-        } catch { /* server briefly busy; keep polling */ }
-      }, 500);
+      poll(job_id, onSettled);
     } catch {
       setPhase("error");
-      setJob({ status: "error", message: "Couldn't reach the local server. Is the app still running?" });
+      setJob(j => ({ ...(j || {}), status: "error", message: "Couldn't reach the local server. Is the app still running?" }));
     }
   }
 
-  function pickAudio(f) {
-    if (!f) return;
-    setFile(f);
-    setPhase("idle");
+  function generate() {
+    if (!file || !lyrics.trim() || working) return;
     setJob(null);
+    submit("/api/jobs", {
+      audio: file, lyrics, strip_tags: stripTags, video_format: format,
+      language, content_type: contentType,
+    }, s => setPhase(s.status));
+  }
+
+  function transcribe() {
+    if (!file || working) return;
+    setJob(null);
+    setDraft(null);
+    submit("/api/transcribe", { audio: file, language, content_type: contentType, script: scriptPick }, s => {
+      if (s.status !== "draft") { setPhase(s.status); return; }
+      setLyrics(s.draft_text || "");
+      setDraft({
+        language: s.detected_language_name, note: s.script_note, script: s.script,
+        approximate: s.approximate_timing, pickedWith: scriptPick,
+      });
+      setPhase("draft");
+    });
+  }
+
+  function approve() {
+    if (!job?.id || !lyrics.trim() || working) return;
+    submit(`/api/jobs/${job.id}/approve`, {
+      lyrics, strip_tags: false, video_format: format, language,
+    }, s => setPhase(s.status));
+  }
+
+  function pickAudio(f) {
+    resetRun();
+    setFile(f || null);
+    if (transcribing) setLyrics("");
   }
 
   async function loadTxt(f) {
@@ -348,10 +450,27 @@ export default function App() {
     setLyrics(await f.text());
   }
 
+  const steps = job?.steps || DEFAULT_STEPS;
   const stageIdx = job?.stage ? job.stage - 1 : 0;
-  const cues = job?.cues || [];
+  const cues = phase === "done" ? job?.cues || [] : [];
   const activeCue = cues.findIndex(c => playTime >= c.start && playTime < c.end);
-  const ready = file && lyrics.trim() && !working;
+  const hasDraft = transcribing && draft && job?.id;
+  const ready = file && !working && (transcribing ? (!hasDraft || lyrics.trim()) : lyrics.trim());
+  const totalSeconds = Object.entries(job?.timings || {})
+    .filter(([k]) => k !== "outputs_seconds")
+    .reduce((sum, [, v]) => sum + v, 0);
+  // Videos play from the audio the server extracted (browsers can't decode every container).
+  const waveSource = isVideo ? (job?.audio_ready && job?.id ? `/api/jobs/${job.id}/audio` : null) : file;
+  const textLabel = contentType === "song" ? "lyrics" : "transcript";
+
+  const scriptName = code => (code && code !== "same" ? scripts.find(o => o.code === code)?.name : null);
+
+  let goLabel = "Generate SRT";
+  let goAction = generate;
+  if (transcribing) {
+    goLabel = hasDraft ? "Approve & generate SRT" : "Transcribe";
+    goAction = hasDraft ? approve : transcribe;
+  }
 
   return (
     <div className="shell">
@@ -366,8 +485,8 @@ export default function App() {
           <span className="kicker">Local audio tool — offline</span>
           <h1>Song <em>SRT</em> Generator</h1>
           <p className="masthead-sub">
-            Your exact lyrics, snapped to the vocal track. No transcription, no guessing —
-            every subtitle matches a line as written.
+            Songs, podcasts, interviews, reels — subtitles timed to every word. Bring your
+            lyrics or script, or let it transcribe a draft for you to correct.
           </p>
         </div>
         <div className="masthead-right">
@@ -378,15 +497,28 @@ export default function App() {
         </div>
       </header>
 
+      <div className="modeswitch" role="tablist" aria-label="Mode">
+        <button role="tab" aria-selected={!transcribing} className={`mode${!transcribing ? " on" : ""}`}
+          onClick={() => setMode("lyrics")} disabled={working}>
+          <b>I have the lyrics/script</b>
+          <span>Paste the exact words; they're timed to the audio.</span>
+        </button>
+        <button role="tab" aria-selected={transcribing} className={`mode${transcribing ? " on" : ""}`}
+          onClick={() => setMode("transcribe")} disabled={working}>
+          <b>Transcribe for me</b>
+          <span>Get a draft, fix it, approve it, get the SRT.</span>
+        </button>
+      </div>
+
       <main className="workbench">
         {/* ------------------------- inputs ------------------------- */}
         <div className="col-inputs">
           <section className="section">
             <div className="section-head">
               <span className="section-num">01</span>
-              <h2 className="section-title">The song</h2>
+              <h2 className="section-title">The audio or video</h2>
             </div>
-            <p className="section-hint">MP3, WAV, M4A, or FLAC.</p>
+            <p className="section-hint">MP3, WAV, M4A or FLAC — or MP4, MOV, MKV or WEBM video (only its sound is used).</p>
             {!file ? (
               <button
                 className={`dropzone${drag ? " drag" : ""}`}
@@ -398,43 +530,68 @@ export default function App() {
                 <div className="dropzone-icon">
                   <svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M7 11V2M3.5 5.5 7 2l3.5 3.5" /><path d="M1.5 12.5h11" /></svg>
                 </div>
-                <div className="dropzone-label">Drop the song here</div>
+                <div className="dropzone-label">Drop the file here</div>
                 <div className="dropzone-sub">or click to browse</div>
               </button>
             ) : (
               <div className="filechip">
                 <div style={{ minWidth: 0 }}>
                   <div className="filechip-name">{file.name}</div>
-                  <div className="filechip-meta">{(file.size / 1048576).toFixed(1)} MB</div>
+                  <div className="filechip-meta">{isVideo ? "Video · " : ""}{(file.size / 1048576).toFixed(1)} MB</div>
                 </div>
-                <button onClick={() => { pickAudio(null); setFile(null); }}>Replace</button>
+                <button onClick={() => pickAudio(null)} disabled={working}>Replace</button>
               </div>
             )}
-            <input ref={audioInput} type="file" accept=".mp3,.wav,.m4a,.flac,audio/*" hidden
-              onChange={e => pickAudio(e.target.files[0])} />
+            <input ref={audioInput} type="file" accept={ACCEPT} hidden
+              onChange={e => { pickAudio(e.target.files[0]); e.target.value = ""; }} />
+
+            <div className="segmented content-type">
+              <button className={`segment${contentType === "song" ? " on" : ""}`} onClick={() => setContentType("song")} disabled={working}>
+                <span><b>Song</b><span>Isolates the vocals first</span></span>
+              </button>
+              <button className={`segment${contentType === "speech" ? " on" : ""}`} onClick={() => setContentType("speech")} disabled={working}>
+                <span><b>Speech</b><span>Podcasts · interviews · voiceovers · reels</span></span>
+              </button>
+            </div>
           </section>
 
           <section className="section">
             <div className="lyrics-head">
               <div className="section-head" style={{ marginBottom: 0 }}>
                 <span className="section-num">02</span>
-                <h2 className="section-title">The lyrics</h2>
+                <h2 className="section-title">The lyrics / transcript</h2>
               </div>
-              <button className="loadtxt" onClick={() => txtInput.current.click()}>Load .txt</button>
-              <input ref={txtInput} type="file" accept=".txt" hidden
-                onChange={e => { loadTxt(e.target.files[0]); e.target.value = ""; }} />
+              {!transcribing && (
+                <>
+                  <button className="loadtxt" onClick={() => txtInput.current.click()}>Load .txt</button>
+                  <input ref={txtInput} type="file" accept=".txt" hidden
+                    onChange={e => { loadTxt(e.target.files[0]); e.target.value = ""; }} />
+                </>
+              )}
             </div>
+            {transcribing && hasDraft && (
+              <p className="draft-hint">
+                Whisper's draft{draft.language ? <> · detected <b>{draft.language}</b></> : null}
+                {scriptName(draft.script) && <> · written as <b>{scriptName(draft.script)}</b></>}
+                {draft.approximate && <span className="approx-badge">approximate timing</span>}. Fix any
+                wrong words, then approve. One line = one subtitle (long lines are split to fit).
+              </p>
+            )}
+            {transcribing && hasDraft && draft.note && <div className="warnbox draft-note">{draft.note}</div>}
             <textarea
               className="lyrics"
               value={lyrics}
-              placeholder={LYRICS_PLACEHOLDER}
+              placeholder={transcribing ? DRAFT_PLACEHOLDER : LYRICS_PLACEHOLDER}
               onChange={e => setLyrics(e.target.value)}
+              readOnly={transcribing && !hasDraft}
               spellCheck={false}
             />
-            <label className="check">
-              <input type="checkbox" checked={stripTags} onChange={e => setStripTags(e.target.checked)} />
-              Remove section labels like [Verse] and [Chorus]
-            </label>
+            {!transcribing && (
+              <label className="check">
+                <input type="checkbox" checked={stripTags} onChange={e => setStripTags(e.target.checked)} />
+                Remove section labels like [Verse] and [Chorus]
+              </label>
+            )}
           </section>
 
           <section className="section" style={{ borderBottom: "none" }}>
@@ -442,7 +599,10 @@ export default function App() {
               <span className="section-num">03</span>
               <h2 className="section-title">The format</h2>
             </div>
-            <p className="section-hint">Sets how long each subtitle line can be, and the language being sung.</p>
+            <p className="section-hint">
+              Sets how long each subtitle line can be, and the language being {contentType === "song" ? "sung" : "spoken"}.
+              {contentType === "speech" && " Speech subtitles also stay on screen 7 seconds at most."}
+            </p>
             <div className="segmented">
               <button className={`segment${format === "vertical" ? " on" : ""}`} onClick={() => setFormat("vertical")}>
                 <span className="segment-frame v" />
@@ -455,28 +615,52 @@ export default function App() {
             </div>
 
             <label className="langpick">
-              <span className="langpick-label">Lyrics language</span>
+              <span className="langpick-label">Language</span>
               <span className="langpick-field">
-                <select value={language} onChange={e => setLanguage(e.target.value)} disabled={!languages.length}>
+                <select value={language} onChange={e => setLanguage(e.target.value)} disabled={!languages.length || working}>
                   {languages.map(l => <option key={l.code} value={l.code}>{l.name}</option>)}
                 </select>
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M3 4.5 6 7.5l3-3" /></svg>
               </span>
             </label>
+            {transcribing && (
+              <label className="langpick">
+                <span className="langpick-label">Lyrics script</span>
+                <span className="langpick-field">
+                  <select value={scriptPick} onChange={e => pickScript(e.target.value)} disabled={!scripts.length || working}>
+                    {scriptPick === AUTO_SCRIPT && <option value={AUTO_SCRIPT}>Automatic</option>}
+                    {scripts.map(o => <option key={o.code} value={o.code}>{o.name}</option>)}
+                  </select>
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M3 4.5 6 7.5l3-3" /></svg>
+                </span>
+              </label>
+            )}
+            {transcribing && (
+              <p className="lang-note">
+                {scriptPick === AUTO_SCRIPT && "Automatic: Hindi or Urdu audio is written as Hinglish, anything else in its own script. "}
+                {scriptPick === "english" && "English translation has approximate timing: translated words can't be matched to the audio word by word. "}
+                {scriptPick === "hinglish" && "Hindi in Roman letters, converted offline from Whisper's Devanagari. "}
+                {hasDraft && draft.pickedWith !== scriptPick && "Transcribe again to use this script; approving keeps the current draft's."}
+              </p>
+            )}
 
-            <button className="go" disabled={!ready} onClick={generate}>
-              {working ? "Working…" : "Generate SRT"}
+            <button className="go" disabled={!ready} onClick={goAction}>
+              {working ? "Working…" : goLabel}
               <span className="arrow">
                 <svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round"><path d="M2 8h11M9.5 4.5 13 8l-3.5 3.5" /></svg>
               </span>
             </button>
+            {hasDraft && !working && (
+              <button className="retranscribe" onClick={transcribe}>Discard the draft and transcribe again</button>
+            )}
           </section>
         </div>
 
         {/* ------------------------- stage ------------------------- */}
         <div className="stagecol">
-          {file ? (
-            <Waveform ref={waveRef} file={file} scanning={working && stageIdx === 0} onTime={setPlayTime} />
+          {waveSource ? (
+            <Waveform ref={waveRef} source={waveSource} name={file.name}
+              scanning={working && stageIdx === 0 && contentType === "song"} onTime={setPlayTime} />
           ) : (
             <div className="wavecard">
               <div className="wavecard-head">
@@ -489,7 +673,7 @@ export default function App() {
                       <i key={i} style={{ height: `${18 + 60 * Math.abs(Math.sin(i * 0.9))}%`, animationDelay: `${i * 72}ms` }} />
                     ))}
                   </div>
-                  <span>Your song appears here</span>
+                  <span>{isVideo ? "The video's sound appears here once it's extracted" : "Your audio appears here"}</span>
                 </div>
               </div>
             </div>
@@ -504,7 +688,7 @@ export default function App() {
                 exit={{ opacity: 0, y: -8 }}
                 transition={{ duration: 0.3 }}
               >
-                <ProcessingCard stage={stageIdx} elapsed={elapsed} />
+                <ProcessingCard steps={steps} stage={stageIdx} elapsed={elapsed} />
               </motion.div>
             )}
           </AnimatePresence>
@@ -513,6 +697,14 @@ export default function App() {
             {phase === "error" && (
               <motion.div key="err" className="errbox" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
                 {job?.message}
+              </motion.div>
+            )}
+
+            {phase === "draft" && (
+              <motion.div key="draft" className="stage-note" initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0 }}>
+                <b>Draft ready.</b> Read it against the audio (press play), correct it in the box on the
+                left, then click <b>Approve &amp; generate SRT</b>. The timing comes from the approved text,
+                and {contentType === "song" ? "the vocals already isolated are reused" : "the same audio is reused"}.
               </motion.div>
             )}
 
@@ -526,7 +718,9 @@ export default function App() {
               >
                 <div className="doneline">
                   <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M2 6.5 4.8 9.2 10 3" /></svg>
-                  Done in {Math.round((job.timings?.separate_seconds || 0) + (job.timings?.align_seconds || 0))}s — every line on its mark.
+                  {job.approximate_timing
+                    ? <>Done in {Math.round(totalSeconds)}s — <span className="approx-badge">approximate timing</span> from Whisper's phrases.</>
+                    : <>Done in {Math.round(totalSeconds)}s — every line on its mark.</>}
                 </div>
 
                 {(job.warnings || []).map(w => <div key={w} className="warnbox">{w}</div>)}
@@ -539,13 +733,17 @@ export default function App() {
                     </span>
                     <svg width="18" height="18" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round"><path d="M8 2v9M4.5 7.5 8 11l3.5-3.5" /><path d="M2.5 13.5h11" /></svg>
                   </a>
-                  <a className="dl-secondary" href={`/api/jobs/${job.id}/vocals`}>Isolated vocals</a>
+                  {job.has_vocals && <a className="dl-secondary" href={`/api/jobs/${job.id}/vocals`}>Isolated vocals</a>}
                 </div>
+
+                {transcribing && (
+                  <p className="stage-note">Spotted a wrong word? Fix it on the left and approve again — it reuses this job's audio.</p>
+                )}
 
                 <div className="cuecard">
                   <div className="cuecard-head">
                     <span className="cuecard-title">Subtitle preview</span>
-                    <span className="cuecard-hint">Click a line to hear it in the song</span>
+                    <span className="cuecard-hint">Click a line to hear it</span>
                   </div>
                   <div className="cuelist">
                     {cues.map((c, i) => (
@@ -567,9 +765,14 @@ export default function App() {
 
           {phase === "idle" && !file && (
             <p className="stage-note">
-              Drop in a song and its exact lyrics. On this Mac a typical track takes
-              <b> under a minute</b> — vocals are isolated first, then every word is
-              aligned to the singing. The subtitle preview appears here when it's done.
+              {transcribing ? (
+                <>Drop in a song, podcast, interview or video. Whisper writes a <b>draft transcript</b>;
+                you correct it, approve it, and every word is then timed to the audio.</>
+              ) : (
+                <>Drop in a song (or a voiceover) and its exact {textLabel}. On this Mac a typical track takes
+                <b> under a minute</b> — {contentType === "song" ? "vocals are isolated first, then " : ""}every
+                word is aligned to the audio. The subtitle preview appears here when it's done.</>
+              )}
             </p>
           )}
         </div>

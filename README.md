@@ -1,6 +1,11 @@
 # Song SRT Generator
 
-Upload an AI-generated song plus the lyrics it was written from — get back a perfectly timestamped SRT subtitle file. It never transcribes: your known lyrics are snapped to the isolated vocal track, so every subtitle matches a lyric line exactly as written. Everything runs on your machine; files never leave your computer.
+Turn a song, podcast, interview, voiceover or reel (audio or video) into a timestamped SRT subtitle file. Two ways in:
+
+- **I have the lyrics/script:** paste the exact words and they're snapped to the audio, so every subtitle matches a line exactly as written.
+- **Transcribe for me:** Whisper writes a draft; you correct it and approve it, then it's timed the same way.
+
+Everything runs on your machine; files never leave your computer.
 
 ## Install — Apple Silicon Macs (M1, M2, M3, M4)
 
@@ -23,19 +28,40 @@ Building release zips from this repo: `./make_release.sh <version>` builds the M
 ## Using it
 
 1. Open **Song SRT Generator** from Applications (or Launchpad). The app opens in its own window; closing the window quits it. Use the toggle in the top-right corner for dark mode. (On Windows or a source checkout, `Start.bat` / `start.command` opens it in your browser instead.)
-2. Upload the song (MP3, WAV, M4A, or FLAC).
-3. Paste the lyrics exactly as sung — one line becomes one subtitle. Write out every repeated chorus in full. You can also upload a `.txt` to fill the box.
-4. Pick the **video format**: Vertical 9:16 for Reels/TikTok (short subtitle lines, max 25 characters) or Horizontal 16:9 for YouTube (up to 42 characters). Every subtitle is a single line; a comma or full stop in your lyrics always starts a new subtitle — punctuate the lyrics the way the song breathes and the captions will follow.
-5. Pick the **lyrics language** from the dropdown under the format: English, Hindi, Hinglish, Spanish, Portuguese, French, German, Italian, Punjabi, or Urdu. The app remembers your last choice. Pick **Hinglish** for Hindi lyrics written in Roman script ("Kabhi kabhi Aditi zindagi mein…") — it aligns them as English, which works well for romanized lyrics; pick **Hindi** for lyrics in Devanagari. The Hindi/Urdu sentence marks (। ॥ ۔ ، ؟) end a subtitle just like a comma or full stop, and a Spanish `¿` or `¡` starts a new one.
-6. Click **Generate SRT**, watch the three steps run, then download the SRT (and the isolated vocal stem as a bonus).
+2. Pick the mode at the top: **I have the lyrics/script** or **Transcribe for me**.
+3. Upload the file: audio (MP3, WAV, M4A, FLAC, up to 500 MB) or video (MP4, MOV, MKV, WEBM, up to 4 GB; only its sound is used).
+4. Pick the **content type**: **Song** isolates the vocals first so the music doesn't get in the way; **Speech** (podcasts, interviews, voiceovers, reels) skips that step and also keeps every subtitle on screen for 7 seconds at most.
+5. Pick the **video format**: Vertical 9:16 for Reels/TikTok (short subtitle lines, max 25 characters) or Horizontal 16:9 for YouTube (up to 42 characters). Every subtitle is a single line; a comma or full stop in the text always starts a new subtitle — punctuate the way the audio breathes and the captions will follow.
+6. Pick the **language**: Auto-detect, English, Hindi, Hinglish, Spanish, Portuguese, French, German, Italian, Punjabi or Urdu. Each mode remembers its last choice (lyrics mode starts on English, transcribe mode on Auto-detect). The Hindi/Urdu sentence marks (। ॥ ۔ ، ؟) end a subtitle just like a comma or full stop, and a Spanish `¿` or `¡` starts a new one.
+7. Then:
+   - **Lyrics/script mode:** paste the words exactly as sung or spoken (one line becomes one subtitle, write out every repeated chorus in full; **Load .txt** fills the box) and click **Generate SRT**.
+   - **Transcribe mode:** pick the **Lyrics script** (below), then click **Transcribe**. The draft appears in the box, one line per phrase, with the language Whisper detected. Play the audio, fix any wrong words, and click **Approve & generate SRT**. The approved text is timed against the same audio (a song's vocals are isolated only once). Spotted a mistake afterwards? Edit and approve again.
+8. Download the SRT (and, for songs, the isolated vocal stem as a bonus).
 
-Every job is also saved in the `jobs/` folder (input copy, vocals, SRT, cue data, log). In the Mac app that's `~/Library/Application Support/Song SRT Generator/jobs/` (in Finder: Go → Go to Folder…). Delete old job folders whenever you like.
+**Transcription quality, honestly** (tested in V3.8, details in DECISIONS.md): clear English speech comes out essentially perfect; a sung English track came out about 80% word-for-word right, so always read a song's draft against the audio. Hindi comes out in Devanagari with misheard words, and on a full Hindi song the second half degraded into nonsense. Transcription runs on the CPU: English takes about half to the full length of the audio, Hindi several times longer (a 3.6-minute Hindi song took 13 minutes). Aligning the approved text then takes seconds.
 
-From the command line: `python pipeline.py <audio> <lyrics.txt> [vertical|horizontal] [en|hi|hinglish|es|pt|fr|de|it|pa|ur]` (format and language are optional, in either order).
+**Lyrics script (transcribe mode)** chooses how the draft is written:
+
+| Option | What you get | Subtitle timing |
+|---|---|---|
+| Same as audio | Whatever script Whisper writes for the detected language (Hindi songs often come out in Urdu script, because Hindi and Urdu sound the same to Whisper) | Aligned to the audio |
+| **Hinglish** | Hindi in everyday Roman letters ("kabhi kabhi zindagi mein"): Whisper transcribes in Hindi, then the app converts it offline. English words stay as they are | Aligned to the audio |
+| Hindi (Devanagari) | Hindi script; any Urdu-script words are converted (roughly — check them) | Aligned to the audio |
+| Urdu script | Urdu script | Aligned to the audio |
+| English translation | Whisper's English translation | **Approximate**: translated words can't be matched to the audio word by word, so subtitles follow Whisper's phrase timings (still within the character caps and 7 seconds) |
+
+Until you pick one, it's **Automatic**: Hindi or Urdu audio is written as Hinglish, anything else in its own script. Your pick is remembered. Changing it after a draft needs a new transcription. In lyrics mode, Hinglish works as before: paste Roman-script lyrics and choose **Hinglish** in the Language dropdown.
+
+Every job is also saved in the `jobs/` folder (the input audio, or just the sound of a video, plus vocals, the draft, the approved text, SRT, cue data and log). In the Mac app that's `~/Library/Application Support/Song SRT Generator/jobs/` (in Finder: Go → Go to Folder…). Delete old job folders whenever you like.
+
+From the command line:
+
+- `python pipeline.py <audio|video> <lyrics.txt> [vertical|horizontal] [auto|en|hi|hinglish|es|pt|fr|de|it|pa|ur] [song|speech]` (the options are optional, in any order)
+- `python pipeline.py --transcribe <audio|video> [language] [song|speech] [script=same|hinglish|devanagari|urdu|english]` prints a draft transcript
 
 ## Settings
 
-Open `config.py` in a text editor — each setting has a one-line comment. (In the Mac app, config.py sits inside the read-only app bundle; the defaults are what you get.) The useful ones: `LANGUAGE` (the language preselected in the dropdown), `MODEL_SIZE` (`"small"` = faster, `"medium"` = more accurate), `STEM_FORMAT` (`"wav"` or `"mp3"`), `PORT`, and `HOST` (set to `"0.0.0.0"` to let teammates on your network use it from their browser).
+Open `config.py` in a text editor — each setting has a one-line comment. (In the Mac app, config.py sits inside the read-only app bundle; the defaults are what you get.) The useful ones: `LANGUAGE` and `TRANSCRIBE_LANGUAGE` (the language preselected in each mode), `MAX_CUE_SECONDS_SPEECH` (longest a speech subtitle stays on screen), `MAX_UPLOAD_MB` / `MAX_VIDEO_UPLOAD_MB`, `MODEL_SIZE` (`"small"` = faster, `"medium"` = more accurate), `STEM_FORMAT` (`"wav"` or `"mp3"`), `PORT`, and `HOST` (set to `"0.0.0.0"` to let teammates on your network use it from their browser).
 
 ## If something goes wrong
 
@@ -45,7 +71,9 @@ Open `config.py` in a text editor — each setting has a one-line comment. (In t
 | Ran out of memory | Set `MODEL_SIZE = "small"` in config.py and restart. |
 | Port already in use | Change `PORT` in config.py. |
 | First job is slow | The model loads into memory once per app start; later jobs are much faster. |
-| "Couldn't align these lyrics" | The lyrics don't match what's sung, or repeated choruses aren't written out in full. Fix and retry. |
+| "Couldn't align this text to the audio" | The words don't match what's sung or said, or repeated choruses aren't written out in full. Fix and retry. |
+| Transcription draft is in the wrong script (Urdu, Devanagari) | Pick **Hinglish** or **Hindi (Devanagari)** under *Lyrics script* and transcribe again. |
+| "This video has no sound track" / "This file is silent" | There's no audio to subtitle; check you exported the video with sound. |
 | Mac app setup window shows an error | Click **Try again**. If it keeps failing, click **Show the log** and send Aman `install.log`. |
 | "Port 7860 is already in use" in the Mac app | The browser version (`start.command`) is still running. Close its Terminal window and click **Try again**. |
 
