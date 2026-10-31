@@ -26,6 +26,18 @@ LANGUAGES = [
     ("ur", "Urdu"),
 ]
 
+# Transcribe mode's "Lyrics script" dropdown: which script the draft is written in.
+# Hinglish = Hindi in Roman letters (transliterated offline from Devanagari). "English translation"
+# uses Whisper's translate task; its subtitle timing is approximate (Whisper's own segments).
+# With no saved choice, Hindi or Urdu audio defaults to Hinglish, anything else to "same".
+SCRIPTS = [
+    ("same", "Same as audio"),
+    ("hinglish", "Hinglish"),
+    ("devanagari", "Hindi (Devanagari)"),
+    ("urdu", "Urdu script"),
+    ("english", "English translation"),
+]
+
 # Dropdown choices that aren't Whisper codes, mapped to the code actually used for alignment.
 # Hinglish (Hindi in Roman script) aligns best as English.
 LANGUAGE_ALIASES = {"hinglish": "en"}

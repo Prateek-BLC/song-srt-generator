@@ -10,7 +10,7 @@ All logic lives here; app.py is UI-only. Two flows share the same stages:
 Also runnable from the CLI:
 
     python pipeline.py <audio|video> <lyrics.txt> [vertical|horizontal] [language] [song|speech]
-    python pipeline.py --transcribe <audio|video> [language] [song|speech]
+    python pipeline.py --transcribe <audio|video> [language] [song|speech] [script=<code>]
 """
 
 import json
@@ -343,19 +343,70 @@ def _max_volume_db(audio_path: Path) -> float:
     return float(match.group(1)) if match else 0.0  # unknown: assume there's sound
 
 
-def transcribe_audio(audio_path: Path, language: str | None, log: logging.Logger) -> dict:
+SCRIPT_CODES = [code for code, _ in config.SCRIPTS]
+DEFAULT_SCRIPT = "default"  # no saved choice: Hinglish for Hindi/Urdu audio, else "same"
+# Script → Whisper language forced for transcription ("same"/"english" keep the dropdown's).
+SCRIPT_TRANSCRIBE_LANGUAGE = {"hinglish": "hi", "devanagari": "hi", "urdu": "ur"}
+# Script → language the approved text is aligned with. Hinglish aligns as English (V3.5).
+SCRIPT_ALIGN_LANGUAGE = {"hinglish": "en", "devanagari": "hi", "urdu": "ur"}
+HINDUSTANI = ("hi", "ur")
+
+
+def _language_code(language: str | None) -> str | None:
+    """stable-ts reports names ("hindi"); keep codes ("hi") everywhere downstream."""
+    try:
+        from whisper.tokenizer import TO_LANGUAGE_CODE
+    except ImportError:
+        return language
+    return TO_LANGUAGE_CODE.get((language or "").lower(), language)
+
+
+def detect_language(audio_path: Path) -> str | None:
+    """Whisper's language guess from the first 30 seconds (None if it can't tell)."""
+    from faster_whisper.audio import decode_audio
+
+    model = _load_align_model()
+    try:
+        audio = decode_audio(str(audio_path))[: 30 * 16000]
+        return model.detect_language(audio)[0]
+    except Exception:
+        return None
+
+
+def resolve_script(script: str, language: str, audio_path: Path, log: logging.Logger) -> str:
+    """Turn "default" into a concrete script: Hinglish when the audio is Hindi or Urdu."""
+    if script in SCRIPT_CODES:
+        return script
+    if language in ("hi", "ur", "hinglish"):
+        spoken = "hi"
+    elif language in (None, AUTO_LANGUAGE):
+        spoken = detect_language(audio_path)
+    else:
+        spoken = whisper_code(language)
+    resolved = "hinglish" if spoken in HINDUSTANI else "same"
+    log.info("Lyrics script: no saved choice, spoken language looks like %s -> %s", spoken, resolved)
+    return resolved
+
+
+def transcribe_audio(audio_path: Path, language: str | None, log: logging.Logger,
+                     script: str = "same") -> dict:
     """Whisper transcription of the vocals (song) or the audio (speech).
 
-    Returns {"lines": [one phrase per line], "language": detected or forced code}.
+    script picks the draft's writing system (config.SCRIPTS): it can force the Whisper
+    language, switch to the translate task, and convert the result offline.
+    Returns {"lines", "language" (spoken, as Whisper detected or was told), "transcribe_language"
+    (code forced, or None for auto), "task", "segments" ([(start, end, text)], for translation)}.
     Uses the same faster-whisper model as alignment, so nothing extra is downloaded.
     """
     if _max_volume_db(audio_path) < SILENCE_DB:
         raise PipelineError("This file is silent, so there's nothing to transcribe.")
     model = _load_align_model()
+    code = SCRIPT_TRANSCRIBE_LANGUAGE.get(script, whisper_code(language, transcribing=True))
+    task = "translate" if script == "english" else "transcribe"
     try:
         # condition_on_previous_text=False stops Whisper repeating a line in a loop,
         # which it otherwise tends to do on sung choruses.
-        result = model.transcribe(str(audio_path), language=whisper_code(language, transcribing=True),
+        result = model.transcribe(str(audio_path), language=code, task=task,
                                   beam_size=5, condition_on_previous_text=False)
     except MemoryError:
         raise PipelineError(
@@ -365,10 +416,22 @@ def transcribe_audio(audio_path: Path, language: str | None, log: logging.Logger
     except Exception:
         log.error("Transcription raised:\n%s", traceback.format_exc())
         raise PipelineError(TRANSCRIBE_FAILURE_MESSAGE)
-    lines = [seg.text.strip() for seg in result.segments if seg.text.strip()]
-    if not lines:
+    segments = [(float(seg.start), float(seg.end), seg.text.strip())
+                for seg in result.segments if seg.text.strip()]
+    if not segments:
         raise PipelineError("Didn't hear any words in this file to transcribe.")
-    return {"lines": lines, "language": result.language}
+    lines = [text for _, _, text in segments]
+    converted = None
+    if script == "hinglish":
+        import transliterate
+        converted = transliterate.has_urdu("\n".join(lines))
+        lines = transliterate.to_hinglish("\n".join(lines)).split("\n")
+    elif script == "devanagari":
+        import transliterate
+        converted = transliterate.has_urdu("\n".join(lines))
+        lines = transliterate.to_devanagari("\n".join(lines)).split("\n")
+    return {"lines": lines, "language": _language_code(result.language), "transcribe_language": code,
+            "task": task, "segments": segments, "urdu_converted": bool(converted)}
 
 
 def _latin_share(text: str) -> float:
@@ -378,9 +441,24 @@ def _latin_share(text: str) -> float:
     return sum(1 for ch in letters if "LATIN" in unicodedata.name(ch, "")) / len(letters)
 
 
-def script_note(choice: str, detected: str, draft: str) -> str | None:
-    """Warn when the draft won't be in the script the user probably wants (see DECISIONS V3.8)."""
-    if _latin_share(draft) >= 0.5:
+SCRIPT_NOTES = {
+    "hinglish": ("Written in Roman letters automatically from Whisper's Hindi (Devanagari) "
+                 "transcription. Check the spellings, and any words Whisper misheard, before approving."),
+    "english": ("English translation by Whisper. Translated words can't be matched to the singing "
+                "or speech word by word, so the subtitles use Whisper's own phrase timings: "
+                "approximate timing. Keep one line per phrase for the best fit."),
+}
+
+
+def script_note(choice: str, detected: str, draft: str, script: str = "same",
+                urdu_converted: bool = False) -> str | None:
+    """Tell the user what the draft's script means (see DECISIONS V3.8)."""
+    if urdu_converted:
+        return ("Some words came back in Urdu script and were converted roughly (Urdu writing "
+                "leaves out short vowels). Check them before approving.")
+    if script in SCRIPT_NOTES:
+        return SCRIPT_NOTES[script]
+    if script != "same" or _latin_share(draft) >= 0.5:
         return None
     if choice == "hinglish":
         return ("Whisper can't write Hindi in Roman letters, so this draft is in Devanagari "
@@ -645,22 +723,31 @@ def start_job(audio_path, content_type: str = "song", report=lambda key, msg: No
     return ctx
 
 
-def run_transcription(ctx: dict, language: str = None, report=lambda key, msg: None) -> dict:
-    """Whisper draft of what's sung or said, one phrase per line, for the user to edit."""
+def run_transcription(ctx: dict, language: str = None, report=lambda key, msg: None,
+                      script: str = DEFAULT_SCRIPT) -> dict:
+    """Whisper draft of what's sung or said, one phrase per line, for the user to edit.
+
+    script: a config.SCRIPTS code, or "default" (no saved choice) to pick Hinglish for
+    Hindi/Urdu audio and "same" otherwise.
+    """
     language = language or config.TRANSCRIBE_LANGUAGE
     log, job_dir = ctx["log"], ctx["job_dir"]
     report("transcribe", "Transcribing with Whisper — about as long as the audio for English, "
                          "several times longer for Hindi…")
     try:
         t0 = time.perf_counter()
-        result = transcribe_audio(ctx["source_path"], language, log)
+        script = resolve_script(script, language, ctx["source_path"], log)
+        result = transcribe_audio(ctx["source_path"], language, log, script)
         ctx["timings"]["transcribe_seconds"] = round(time.perf_counter() - t0, 2)
-        ctx["detected_language"] = result["language"]
+        ctx.update(detected_language=result["language"], script=script,
+                   transcribe_language=result["transcribe_language"], task=result["task"],
+                   translation_segments=result["segments"] if script == "english" else None)
         draft = "\n".join(result["lines"])
         (job_dir / "transcript-draft.txt").write_text(draft + "\n", encoding="utf-8")
-        log.info("Transcribed %d lines in %.1fs, language choice=%s, whisper language=%s",
-                 len(result["lines"]), ctx["timings"]["transcribe_seconds"], language,
-                 result["language"])
+        log.info("Transcribed %d lines in %.1fs: language choice=%s, script=%s, task=%s, "
+                 "whisper code forced=%s, spoken language=%s",
+                 len(result["lines"]), ctx["timings"]["transcribe_seconds"], language, script,
+                 result["task"], result["transcribe_language"], result["language"])
     except PipelineError:
         raise
     except Exception:
@@ -669,8 +756,53 @@ def run_transcription(ctx: dict, language: str = None, report=lambda key, msg: N
         "draft_text": draft,
         "detected_language": result["language"],
         "detected_language_name": language_name(result["language"]),
-        "script_note": script_note(language, result["language"], draft),
+        "script": script,
+        "approximate_timing": script == "english",
+        "script_note": script_note(language, result["language"], draft, script,
+                                   result["urdu_converted"]),
     }
+
+
+def approximate_segments(segments: list[tuple], lines: list[str]) -> list:
+    """Word timings for text that can't be force-aligned (a translation).
+
+    One approved line per Whisper segment keeps that segment's span; otherwise the lines
+    are laid out over the speech in order, by length. Words get times in proportion to
+    their length. Returns objects shaped like stable-ts segments for chunk_segments().
+    """
+    from types import SimpleNamespace
+
+    def timed_words(text, to_time, start, end):
+        words = text.split()
+        total = sum(len(w) + 1 for w in words) or 1
+        out, pos = [], 0
+        for w in words:
+            a, b = pos / total, (pos + len(w)) / total
+            out.append(SimpleNamespace(word=" " + w, start=to_time(start + a * (end - start)),
+                                       end=to_time(start + b * (end - start))))
+            pos += len(w) + 1
+        return SimpleNamespace(words=out)
+
+    if len(lines) == len(segments):
+        return [timed_words(line, lambda t: t, s, e) for (s, e, _), line in zip(segments, lines)]
+
+    spans = [(s, e) for s, e, _ in segments]
+    speech = sum(e - s for s, e in spans) or 1.0
+
+    def to_time(t):  # position in speech-only time → real time, skipping the gaps
+        for s, e in spans:
+            if t <= e - s:
+                return s + t
+            t -= e - s
+        return spans[-1][1]
+
+    total = sum(len(line) for line in lines) or 1
+    out, pos = [], 0.0
+    for line in lines:
+        share = speech * len(line) / total
+        out.append(timed_words(line, to_time, pos, pos + share))
+        pos += share
+    return out
 
 
 def align_and_write(ctx: dict, lyrics_text: str, strip_tags: bool = True,
@@ -682,36 +814,52 @@ def align_and_write(ctx: dict, lyrics_text: str, strip_tags: bool = True,
     """
     video_format = video_format or config.FORMAT_DEFAULT
     language = language or config.LANGUAGE
+    script = ctx.get("script")  # set by run_transcription; None in lyrics mode
+    approximate = script == "english"
     # Auto-detect: reuse what transcription detected; without a transcription Whisper detects.
     whisper_language = (ctx["detected_language"] if language == AUTO_LANGUAGE
                         else whisper_code(language))
-    if language == "hinglish" and _latin_share(lyrics_text) < 0.5:
+    if script in SCRIPT_ALIGN_LANGUAGE:
+        whisper_language = SCRIPT_ALIGN_LANGUAGE[script]
+    if (language == "hinglish" or script == "hinglish") and _latin_share(lyrics_text) < 0.5:
         whisper_language = "hi"  # an approved Devanagari draft with Hinglish still selected
+    if approximate:
+        whisper_language = None  # nothing is aligned; timings come from Whisper's segments
     max_chars = (config.MAX_CHARS_VERTICAL if video_format == "vertical"
                  else config.MAX_CHARS_HORIZONTAL)
-    max_seconds = config.MAX_CUE_SECONDS_SPEECH if ctx["content_type"] == "speech" else None
+    # Speech, and translations (whose phrase timings can run long), get the 7 s cap.
+    max_seconds = (config.MAX_CUE_SECONDS_SPEECH
+                   if ctx["content_type"] == "speech" or approximate else None)
     lyric_lines, lyric_warning = preprocess_lyrics(lyrics_text, strip_tags=strip_tags)
     log, job_dir, timings = ctx["log"], ctx["job_dir"], ctx["timings"]
     warnings = ctx["warnings"] + ([lyric_warning] if lyric_warning else [])
-    log.info("Aligning %d lines, strip_tags=%s, format=%s (max %d chars/line, max %s s/cue), "
-             "language=%s (whisper code %s)", len(lyric_lines), strip_tags, video_format,
-             max_chars, max_seconds, language, whisper_language)
+    log.info("%s %d lines, strip_tags=%s, format=%s (max %d chars/line, max %s s/cue), "
+             "language=%s, script=%s (whisper code %s)",
+             "Timing (approximate, no alignment)" if approximate else "Aligning",
+             len(lyric_lines), strip_tags, video_format, max_chars, max_seconds, language,
+             script, whisper_language)
     if lyric_warning:
         log.warning(lyric_warning)
     (job_dir / "lyrics.txt").write_text("\n".join(lyric_lines) + "\n", encoding="utf-8")
 
     try:
         song = ctx["content_type"] == "song"
-        report("align", f"Aligning {'lyrics' if song else 'the transcript'} (first run loads "
-                        "the model, roughly 30 seconds to 2 minutes)…")
         t0 = time.perf_counter()
-        result = align_lyrics(ctx["source_path"], lyric_lines, log, whisper_language)
+        if approximate:
+            report("align", "Timing the translation from Whisper's phrase timings…")
+            segments = approximate_segments(ctx["translation_segments"], lyric_lines)
+        else:
+            report("align", f"Aligning {'lyrics' if song else 'the transcript'} (first run "
+                            "loads the model, roughly 30 seconds to 2 minutes)…")
+            result = align_lyrics(ctx["source_path"], lyric_lines, log, whisper_language)
+            whisper_language = whisper_language or getattr(result, "language", None)
+            segments = result.segments
         timings["align_seconds"] = round(time.perf_counter() - t0, 2)
-        log.info("Aligned %d segments in %.1fs", len(result.segments), timings["align_seconds"])
+        log.info("Timed %d segments in %.1fs", len(segments), timings["align_seconds"])
 
         report("build", "Building the SRT…")
         t0 = time.perf_counter()
-        cues = sanitize_cues(chunk_segments(result.segments, max_chars, max_seconds))
+        cues = sanitize_cues(chunk_segments(segments, max_chars, max_seconds))
         srt_path = job_dir / f"{ctx['stem']}.srt"
         write_srt(cues, srt_path)
 
@@ -724,7 +872,12 @@ def align_and_write(ctx: dict, lyrics_text: str, strip_tags: bool = True,
             "early_appear_seconds": config.EARLY_APPEAR_SECONDS,
             "model_size": config.MODEL_SIZE,
             "language": language,
-            "whisper_language": whisper_language or getattr(result, "language", None),
+            "script": script,
+            "whisper_language": whisper_language,
+            "transcribe_language": ctx.get("transcribe_language"),
+            "spoken_language": ctx.get("detected_language"),
+            "task": ctx.get("task"),
+            "timing": "approximate" if approximate else "aligned",
             "separator_engine": config.SEPARATOR_ENGINE if song else None,
             "separator_model": config.SEPARATOR_MODEL if song else None,
             "duration_seconds": round(ctx["duration"], 2),
@@ -784,17 +937,21 @@ def main(argv: list[str]) -> int:
     codes = [code for code, _ in config.LANGUAGES]
     usage = ("Usage: python pipeline.py <audio|video> <lyrics.txt> [vertical|horizontal] "
              f"[{'|'.join(codes)}] [song|speech]\n"
-             f"       python pipeline.py --transcribe <audio|video> [{'|'.join(codes)}] [song|speech]")
+             f"       python pipeline.py --transcribe <audio|video> [{'|'.join(codes)}] [song|speech] "
+             f"[script={'|'.join(SCRIPT_CODES)}]")
     transcribe = bool(argv) and argv[0] == "--transcribe"
     if transcribe:
         argv = argv[1:]
     positional = 1 if transcribe else 2
-    if not positional <= len(argv) <= positional + 3:
+    if not positional <= len(argv) <= positional + 4:
         print(usage)
         return 2
     video_format = language = content_type = None
+    script = DEFAULT_SCRIPT
     for arg in argv[positional:]:
-        if arg in ("vertical", "horizontal") and video_format is None and not transcribe:
+        if transcribe and arg.startswith("script=") and arg[7:] in SCRIPT_CODES:
+            script = arg[7:]
+        elif arg in ("vertical", "horizontal") and video_format is None and not transcribe:
             video_format = arg
         elif arg in codes and language is None:
             language = arg
@@ -809,9 +966,10 @@ def main(argv: list[str]) -> int:
         if transcribe:
             report = make_reporter(flow_steps("transcribe", content_type), _progress)
             ctx = start_job(Path(argv[0]), content_type, report)
-            draft = run_transcription(ctx, language, report)
+            draft = run_transcription(ctx, language, report, script)
             print(f"Job folder: {ctx['job_dir']}")
             print(f"Language:   {draft['detected_language_name']} ({draft['detected_language']})")
+            print(f"Script:     {draft['script']}")
             if draft["script_note"]:
                 print(f"NOTE: {draft['script_note']}")
             print(f"Timings:    {ctx['timings']}")

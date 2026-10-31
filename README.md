@@ -35,19 +35,29 @@ Building release zips from this repo: `./make_release.sh <version>` builds the M
 6. Pick the **language**: Auto-detect, English, Hindi, Hinglish, Spanish, Portuguese, French, German, Italian, Punjabi or Urdu. Each mode remembers its last choice (lyrics mode starts on English, transcribe mode on Auto-detect). The Hindi/Urdu sentence marks (। ॥ ۔ ، ؟) end a subtitle just like a comma or full stop, and a Spanish `¿` or `¡` starts a new one.
 7. Then:
    - **Lyrics/script mode:** paste the words exactly as sung or spoken (one line becomes one subtitle, write out every repeated chorus in full; **Load .txt** fills the box) and click **Generate SRT**.
-   - **Transcribe mode:** click **Transcribe**. The draft appears in the box, one line per phrase, with the language Whisper detected. Play the audio, fix any wrong words, and click **Approve & generate SRT**. The approved text is timed against the same audio (a song's vocals are isolated only once). Spotted a mistake afterwards? Edit and approve again.
+   - **Transcribe mode:** pick the **Lyrics script** (below), then click **Transcribe**. The draft appears in the box, one line per phrase, with the language Whisper detected. Play the audio, fix any wrong words, and click **Approve & generate SRT**. The approved text is timed against the same audio (a song's vocals are isolated only once). Spotted a mistake afterwards? Edit and approve again.
 8. Download the SRT (and, for songs, the isolated vocal stem as a bonus).
 
 **Transcription quality, honestly** (tested in V3.8, details in DECISIONS.md): clear English speech comes out essentially perfect; a sung English track came out about 80% word-for-word right, so always read a song's draft against the audio. Hindi comes out in Devanagari with misheard words, and on a full Hindi song the second half degraded into nonsense. Transcription runs on the CPU: English takes about half to the full length of the audio, Hindi several times longer (a 3.6-minute Hindi song took 13 minutes). Aligning the approved text then takes seconds.
 
-**Hindi and Hinglish:** Whisper can't write Hindi in Roman letters. With **Hinglish** selected, the draft comes out in Devanagari (Hindi script); retype it in Roman letters before approving for Hinglish subtitles, or approve it as is for Hindi-script subtitles. **Auto-detect** often hears Hindi as Urdu and writes Urdu script, so pick Hindi or Hinglish for Hindi audio. In lyrics mode, Hinglish works as before: paste the Roman-script lyrics and they're aligned well.
+**Lyrics script (transcribe mode)** chooses how the draft is written:
+
+| Option | What you get | Subtitle timing |
+|---|---|---|
+| Same as audio | Whatever script Whisper writes for the detected language (Hindi songs often come out in Urdu script, because Hindi and Urdu sound the same to Whisper) | Aligned to the audio |
+| **Hinglish** | Hindi in everyday Roman letters ("kabhi kabhi zindagi mein"): Whisper transcribes in Hindi, then the app converts it offline. English words stay as they are | Aligned to the audio |
+| Hindi (Devanagari) | Hindi script; any Urdu-script words are converted (roughly — check them) | Aligned to the audio |
+| Urdu script | Urdu script | Aligned to the audio |
+| English translation | Whisper's English translation | **Approximate**: translated words can't be matched to the audio word by word, so subtitles follow Whisper's phrase timings (still within the character caps and 7 seconds) |
+
+Until you pick one, it's **Automatic**: Hindi or Urdu audio is written as Hinglish, anything else in its own script. Your pick is remembered. Changing it after a draft needs a new transcription. In lyrics mode, Hinglish works as before: paste Roman-script lyrics and choose **Hinglish** in the Language dropdown.
 
 Every job is also saved in the `jobs/` folder (the input audio, or just the sound of a video, plus vocals, the draft, the approved text, SRT, cue data and log). In the Mac app that's `~/Library/Application Support/Song SRT Generator/jobs/` (in Finder: Go → Go to Folder…). Delete old job folders whenever you like.
 
 From the command line:
 
 - `python pipeline.py <audio|video> <lyrics.txt> [vertical|horizontal] [auto|en|hi|hinglish|es|pt|fr|de|it|pa|ur] [song|speech]` (the options are optional, in any order)
-- `python pipeline.py --transcribe <audio|video> [language] [song|speech]` prints a draft transcript
+- `python pipeline.py --transcribe <audio|video> [language] [song|speech] [script=same|hinglish|devanagari|urdu|english]` prints a draft transcript
 
 ## Settings
 
@@ -62,7 +72,7 @@ Open `config.py` in a text editor — each setting has a one-line comment. (In t
 | Port already in use | Change `PORT` in config.py. |
 | First job is slow | The model loads into memory once per app start; later jobs are much faster. |
 | "Couldn't align this text to the audio" | The words don't match what's sung or said, or repeated choruses aren't written out in full. Fix and retry. |
-| Transcription draft is in the wrong script (Urdu, Devanagari) | See *Hindi and Hinglish* above: pick the language instead of Auto-detect, or retype the draft. |
+| Transcription draft is in the wrong script (Urdu, Devanagari) | Pick **Hinglish** or **Hindi (Devanagari)** under *Lyrics script* and transcribe again. |
 | "This video has no sound track" / "This file is silent" | There's no audio to subtitle; check you exported the video with sound. |
 | Mac app setup window shows an error | Click **Try again**. If it keeps failing, click **Show the log** and send Aman `install.log`. |
 | "Port 7860 is already in use" in the Mac app | The browser version (`start.command`) is still running. Close its Terminal window and click **Try again**. |

@@ -27,8 +27,8 @@ from fastapi.staticfiles import StaticFiles
 
 import config
 from pipeline import (ACCEPTED_EXTENSIONS, AUTO_LANGUAGE, CONTENT_TYPES, DATA_DIR,
-                      PipelineError, align_and_write, flow_steps, is_video, make_reporter,
-                      preprocess_lyrics, run_transcription, start_job)
+                      DEFAULT_SCRIPT, SCRIPT_CODES, PipelineError, align_and_write, flow_steps,
+                      is_video, make_reporter, preprocess_lyrics, run_transcription, start_job)
 
 ROOT = Path(__file__).parent
 DIST = ROOT / "frontend" / "dist"
@@ -97,7 +97,7 @@ def _run_job(job: dict):
         shutil.rmtree(job["upload_dir"], ignore_errors=True)
     ctx = job["ctx"]
     if job["task"] == "transcribe":
-        draft = run_transcription(ctx, job["language"], report)
+        draft = run_transcription(ctx, job["language"], report, job["script"])
         job.update(status="draft", message="Draft ready", timings=dict(ctx["timings"]),
                    warnings=list(ctx["warnings"]), job_dir=ctx["job_dir"].name, **draft)
         return
@@ -156,6 +156,7 @@ def meta():
         "languages": [{"code": code, "name": name} for code, name in config.LANGUAGES],
         "language_default": config.LANGUAGE,
         "transcribe_language_default": config.TRANSCRIBE_LANGUAGE,
+        "scripts": [{"code": code, "name": name} for code, name in config.SCRIPTS],
         "accepted_extensions": sorted(ACCEPTED_EXTENSIONS),
         "max_upload_mb": {"audio": config.MAX_UPLOAD_MB, "video": config.MAX_VIDEO_UPLOAD_MB},
         "max_chars": {"vertical": config.MAX_CHARS_VERTICAL,
@@ -277,8 +278,11 @@ async def create_transcription(
     audio: UploadFile = File(...),
     language: str = Form(config.TRANSCRIBE_LANGUAGE),
     content_type: str = Form("song"),
+    script: str = Form(DEFAULT_SCRIPT),
 ):
-    """Transcribe mode, phase 1: prepare the audio (and vocals) and return a Whisper draft."""
+    """Transcribe mode, phase 1: prepare the audio (and vocals) and return a Whisper draft.
+
+    script: a config.SCRIPTS code, or "default" when the user has no saved choice."""
     _, language, content_type = _clean_choices(
         config.FORMAT_DEFAULT, language, content_type, config.TRANSCRIBE_LANGUAGE)
     _evict_finished_jobs()
@@ -290,6 +294,7 @@ async def create_transcription(
         "task": "transcribe", "mode": "transcribe", "created": time.time(),
         "audio_path": str(audio_path), "upload_dir": str(upload_dir),
         "language": language, "content_type": content_type,
+        "script": script if script in SCRIPT_CODES else DEFAULT_SCRIPT,
     })
 
 
@@ -316,7 +321,8 @@ def approve_transcript(
 
 PUBLIC_KEYS = ("status", "stage", "steps", "message", "mode", "content_type", "srt_name",
                "job_dir", "cues", "timings", "warnings", "audio_ready", "draft_text",
-               "detected_language", "detected_language_name", "script_note")
+               "detected_language", "detected_language_name", "script", "approximate_timing",
+               "script_note")
 
 
 @app.get("/api/jobs/{job_id}")

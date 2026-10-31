@@ -242,6 +242,10 @@ function useTheme() {
 }
 
 const LANG_KEYS = { lyrics: "srt-language", transcribe: "srt-language-transcribe" };
+const SCRIPT_KEY = "srt-script";
+/* With no saved "Lyrics script" choice the server decides after hearing the audio:
+   Hinglish for Hindi or Urdu, otherwise the same script as the audio. */
+const AUTO_SCRIPT = "default";
 
 function stored(key, fallback) {
   try { return localStorage.getItem(key) || fallback; } catch { return fallback; }
@@ -314,12 +318,14 @@ export default function App() {
   const [format, setFormat] = useState("vertical");
   const [languages, language, setLanguage] = useLanguage(mode);
   const [version, update] = useVersionInfo();
+  const [scripts, setScripts] = useState([]);
+  const [scriptPick, setScriptPick] = useState(() => stored(SCRIPT_KEY, AUTO_SCRIPT));
   const [drag, setDrag] = useState(false);
 
   // phase: idle | working | draft | done | error
   const [phase, setPhase] = useState("idle");
   const [job, setJob] = useState(null); // server state object (+ id)
-  const [draft, setDraft] = useState(null); // transcribe mode: {id, language name, note}
+  const [draft, setDraft] = useState(null); // transcribe mode: {language, note, script, approximate}
   const [playTime, setPlayTime] = useState(0);
 
   const waveRef = useRef(null);
@@ -333,6 +339,14 @@ export default function App() {
   const isVideo = file && VIDEO_EXT.test(file.name);
 
   useEffect(() => () => clearInterval(pollRef.current), []);
+  useEffect(() => {
+    fetch("/api/meta").then(r => r.json()).then(m => setScripts(m.scripts || [])).catch(() => {});
+  }, []);
+
+  function pickScript(code) {
+    setScriptPick(code);
+    store(SCRIPT_KEY, code); // only explicit picks are remembered
+  }
 
   function resetRun() {
     clearInterval(pollRef.current);
@@ -407,10 +421,13 @@ export default function App() {
     if (!file || working) return;
     setJob(null);
     setDraft(null);
-    submit("/api/transcribe", { audio: file, language, content_type: contentType }, s => {
+    submit("/api/transcribe", { audio: file, language, content_type: contentType, script: scriptPick }, s => {
       if (s.status !== "draft") { setPhase(s.status); return; }
       setLyrics(s.draft_text || "");
-      setDraft({ language: s.detected_language_name, note: s.script_note });
+      setDraft({
+        language: s.detected_language_name, note: s.script_note, script: s.script,
+        approximate: s.approximate_timing, pickedWith: scriptPick,
+      });
       setPhase("draft");
     });
   }
@@ -445,6 +462,8 @@ export default function App() {
   // Videos play from the audio the server extracted (browsers can't decode every container).
   const waveSource = isVideo ? (job?.audio_ready && job?.id ? `/api/jobs/${job.id}/audio` : null) : file;
   const textLabel = contentType === "song" ? "lyrics" : "transcript";
+
+  const scriptName = code => (code && code !== "same" ? scripts.find(o => o.code === code)?.name : null);
 
   let goLabel = "Generate SRT";
   let goAction = generate;
@@ -552,7 +571,9 @@ export default function App() {
             </div>
             {transcribing && hasDraft && (
               <p className="draft-hint">
-                Whisper's draft{draft.language ? <> · detected <b>{draft.language}</b></> : null}. Fix any
+                Whisper's draft{draft.language ? <> · detected <b>{draft.language}</b></> : null}
+                {scriptName(draft.script) && <> · written as <b>{scriptName(draft.script)}</b></>}
+                {draft.approximate && <span className="approx-badge">approximate timing</span>}. Fix any
                 wrong words, then approve. One line = one subtitle (long lines are split to fit).
               </p>
             )}
@@ -602,10 +623,24 @@ export default function App() {
                 <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M3 4.5 6 7.5l3-3" /></svg>
               </span>
             </label>
-            {transcribing && language === "hinglish" && !hasDraft && (
+            {transcribing && (
+              <label className="langpick">
+                <span className="langpick-label">Lyrics script</span>
+                <span className="langpick-field">
+                  <select value={scriptPick} onChange={e => pickScript(e.target.value)} disabled={!scripts.length || working}>
+                    {scriptPick === AUTO_SCRIPT && <option value={AUTO_SCRIPT}>Automatic</option>}
+                    {scripts.map(o => <option key={o.code} value={o.code}>{o.name}</option>)}
+                  </select>
+                  <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round"><path d="M3 4.5 6 7.5l3-3" /></svg>
+                </span>
+              </label>
+            )}
+            {transcribing && (
               <p className="lang-note">
-                Whisper can't write Hindi in Roman letters: the draft will be in Devanagari (Hindi script).
-                Retype it in Roman letters before approving if you want Hinglish subtitles.
+                {scriptPick === AUTO_SCRIPT && "Automatic: Hindi or Urdu audio is written as Hinglish, anything else in its own script. "}
+                {scriptPick === "english" && "English translation has approximate timing: translated words can't be matched to the audio word by word. "}
+                {scriptPick === "hinglish" && "Hindi in Roman letters, converted offline from Whisper's Devanagari. "}
+                {hasDraft && draft.pickedWith !== scriptPick && "Transcribe again to use this script; approving keeps the current draft's."}
               </p>
             )}
 
@@ -683,7 +718,9 @@ export default function App() {
               >
                 <div className="doneline">
                   <svg width="13" height="13" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><path d="M2 6.5 4.8 9.2 10 3" /></svg>
-                  Done in {Math.round(totalSeconds)}s — every line on its mark.
+                  {job.approximate_timing
+                    ? <>Done in {Math.round(totalSeconds)}s — <span className="approx-badge">approximate timing</span> from Whisper's phrases.</>
+                    : <>Done in {Math.round(totalSeconds)}s — every line on its mark.</>}
                 </div>
 
                 {(job.warnings || []).map(w => <div key={w} className="warnbox">{w}</div>)}
