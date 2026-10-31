@@ -649,8 +649,8 @@ def run_transcription(ctx: dict, language: str = None, report=lambda key, msg: N
     """Whisper draft of what's sung or said, one phrase per line, for the user to edit."""
     language = language or config.TRANSCRIBE_LANGUAGE
     log, job_dir = ctx["log"], ctx["job_dir"]
-    report("transcribe", "Transcribing with Whisper (first run loads the model, "
-                         "roughly 30 seconds to 2 minutes)…")
+    report("transcribe", "Transcribing with Whisper — about as long as the audio for English, "
+                         "several times longer for Hindi…")
     try:
         t0 = time.perf_counter()
         result = transcribe_audio(ctx["source_path"], language, log)
