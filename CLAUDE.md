@@ -2,7 +2,7 @@
 
 You are the installer and operator of this app. Set it up on this machine, verify it, then run it.
 
-This app takes an AI-generated song + its ground-truth lyrics and produces a timestamped SRT by forced alignment (never transcription). Pipeline: audio → vocal isolation → align pasted lyrics to the vocal stem → SRT. Fully offline after one-time model downloads.
+This app turns a song or speech (audio or video) into a timestamped SRT by forced alignment. Lyrics mode aligns the user's pasted lyrics/script and never transcribes; Transcribe mode has Whisper draft the text, the user corrects and approves it, and only the approved text is aligned (DECISIONS.md V3.8). Pipeline: audio → vocal isolation (songs) → align text to the vocal stem → SRT. Fully offline after one-time model downloads.
 
 ## 1. Preflight
 
