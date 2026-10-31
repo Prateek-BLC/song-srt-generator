@@ -5,7 +5,8 @@ corners transparent, places the artwork on Apple's macOS icon grid (824 px insid
 1024 px canvas, with a soft shadow like other Dock icons), and writes:
 
   macapp/AppIcon.icns            the .app icon
-  frontend/public/favicon.png    the browser favicon (artwork only, no padding)
+  frontend/public/favicon.png    the app's browser favicon (artwork only, no padding)
+  docs/assets/favicon.png        the same favicon for the GitHub Pages site
 
 Run with any Python that has Pillow (the app venv does):  python macapp/make_icon.py
 Needs macOS `iconutil`. The outputs are committed, so this only runs when the icon changes.
@@ -19,7 +20,8 @@ from PIL import Image, ImageChops, ImageFilter
 
 HERE = Path(__file__).parent
 SOURCE = HERE / "icon-source.png"
-FAVICON = HERE.parent / "frontend" / "public" / "favicon.png"
+FAVICONS = (HERE.parent / "frontend" / "public" / "favicon.png",
+            HERE.parent / "docs" / "assets" / "favicon.png")
 CANVAS, ARTWORK = 1024, 824  # Apple's macOS icon grid
 INSET = 8  # px the "reference colour" is sampled inward from each edge pixel
 PAD = 48  # temporary black margin while filtering
@@ -111,8 +113,10 @@ def main():
             master.resize((size * 2, size * 2), Image.LANCZOS).save(iconset / f"icon_{size}x{size}@2x.png")
         subprocess.run(["iconutil", "-c", "icns", str(iconset), "-o", str(HERE / "AppIcon.icns")], check=True)
     # Favicon: the artwork edge to edge, so it isn't tiny in a browser tab.
-    art.resize((128, 128), Image.LANCZOS).save(FAVICON, optimize=True)
-    print(f"wrote {HERE / 'AppIcon.icns'} and {FAVICON}")
+    favicon = art.resize((128, 128), Image.LANCZOS)
+    for path in FAVICONS:
+        favicon.save(path, optimize=True)
+    print(f"wrote {HERE / 'AppIcon.icns'} and {', '.join(str(p) for p in FAVICONS)}")
 
 
 if __name__ == "__main__":
