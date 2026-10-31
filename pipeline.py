@@ -1,12 +1,21 @@
 """Song SRT Generator — processing pipeline.
 
-All logic lives here; app.py is UI-only. Also runnable from the CLI:
+All logic lives here; app.py is UI-only. Two flows share the same stages:
 
-    python pipeline.py <audio> <lyrics.txt> [vertical|horizontal] [language, e.g. es or hinglish]
+- Lyrics/script: prepare audio → (song: isolate vocals) → align the given text → SRT.
+- Transcribe: prepare audio → (song: isolate vocals) → Whisper draft → the user edits
+  and approves it → align the approved text to the same audio → SRT. The vocals
+  are isolated once; approval reuses them.
+
+Also runnable from the CLI:
+
+    python pipeline.py <audio|video> <lyrics.txt> [vertical|horizontal] [language] [song|speech]
+    python pipeline.py --transcribe <audio|video> [language] [song|speech]
 """
 
 import json
 import logging
+import math
 import os
 import re
 import shutil
@@ -32,7 +41,14 @@ MODELS_DIR = DATA_DIR / "models"
 # self-contained and deleting the folder removes everything.
 os.environ.setdefault("HF_HOME", str(MODELS_DIR / "hf"))
 
-ACCEPTED_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac"}
+AUDIO_EXTENSIONS = {".mp3", ".wav", ".m4a", ".flac"}
+VIDEO_EXTENSIONS = {".mp4", ".mov", ".mkv", ".webm"}
+ACCEPTED_EXTENSIONS = AUDIO_EXTENSIONS | VIDEO_EXTENSIONS
+UNREADABLE_FILE = ("Couldn't read this file. Use MP3, WAV, M4A or FLAC audio, "
+                   "or MP4, MOV, MKV or WEBM video.")
+
+AUTO_LANGUAGE = "auto"
+CONTENT_TYPES = ("song", "speech")
 
 MIN_CUE_SECONDS = 0.6
 OVERLAP_GAP = 0.010  # 10 ms pulled between overlapping cues
@@ -50,6 +66,10 @@ class PipelineError(Exception):
 # ---------------------------------------------------------------------------
 # Stage 0: validate
 
+def is_video(path: Path) -> bool:
+    return Path(path).suffix.lower() in VIDEO_EXTENSIONS
+
+
 def probe_duration(audio_path: Path) -> float:
     """Return audio duration in seconds via ffprobe."""
     try:
@@ -65,16 +85,28 @@ def probe_duration(audio_path: Path) -> float:
     try:
         return float(out.stdout.strip())
     except ValueError:
-        raise PipelineError("Couldn't read this audio file. Use MP3, WAV, M4A, or FLAC.")
+        raise PipelineError(UNREADABLE_FILE)
+
+
+def _has_audio_stream(path: Path) -> bool:
+    out = subprocess.run(
+        ["ffprobe", "-v", "error", "-select_streams", "a", "-show_entries", "stream=index",
+         "-of", "csv=p=0", str(path)],
+        capture_output=True, text=True, timeout=60,
+    )
+    return bool(out.stdout.strip())
 
 
 def validate_audio(audio_path: Path) -> tuple[float, str | None]:
-    """Return (duration_seconds, warning_or_None). Raises PipelineError on hard failures."""
-    if audio_path.suffix.lower() not in ACCEPTED_EXTENSIONS:
-        raise PipelineError("Couldn't read this audio file. Use MP3, WAV, M4A, or FLAC.")
-    if not audio_path.exists():
-        raise PipelineError("Couldn't read this audio file. Use MP3, WAV, M4A, or FLAC.")
+    """Return (duration_seconds, warning_or_None). Raises PipelineError on hard failures.
+
+    Accepts audio and video files; a video must have a sound track.
+    """
+    if audio_path.suffix.lower() not in ACCEPTED_EXTENSIONS or not audio_path.exists():
+        raise PipelineError(UNREADABLE_FILE)
     duration = probe_duration(audio_path)
+    if is_video(audio_path) and not _has_audio_stream(audio_path):
+        raise PipelineError("This video has no sound track, so there's nothing to subtitle.")
     if duration > config.MAX_MINUTES_HARD * 60:
         raise PipelineError(
             f"This file is over the {config.MAX_MINUTES_HARD} minute limit for this tool."
@@ -119,9 +151,28 @@ def preprocess_lyrics(raw_text: str, strip_tags: bool = True) -> tuple[list[str]
         lines.append(line)
     if not lines:
         raise PipelineError(
-            "Lyrics are empty. Paste the lyrics exactly as sung, one line per subtitle."
+            "The lyrics / transcript box is empty. Paste the words exactly as sung or "
+            "spoken, one line per subtitle."
         )
     return lines, warning
+
+
+# ---------------------------------------------------------------------------
+# Stage 1.5: audio from video
+
+def extract_audio(video_path: Path, out_path: Path) -> Path:
+    """Write the video's first audio track as 44.1 kHz stereo WAV (what the separator expects)."""
+    proc = subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-i", str(video_path), "-map", "0:a:0", "-vn",
+         "-ac", "2", "-ar", "44100", "-c:a", "pcm_s16le", str(out_path)],
+        capture_output=True, text=True,
+    )
+    if proc.returncode != 0 or not out_path.exists():
+        raise PipelineError(
+            "Couldn't extract the audio from this video. Try exporting it again as MP4, "
+            "or upload the audio on its own."
+        )
+    return out_path
 
 
 # ---------------------------------------------------------------------------
@@ -213,15 +264,18 @@ def _load_align_model():
 
 
 ALIGN_FAILURE_MESSAGE = (
-    "Couldn't align these lyrics to this song. Two usual causes: the lyrics "
-    "don't match what is actually sung, or repeated choruses aren't written "
-    "out in full. Fix the lyrics and try again."
+    "Couldn't align this text to the audio. Two usual causes: the words don't "
+    "match what is actually sung or said, or repeated choruses aren't written "
+    "out in full. Fix the text and try again."
 )
 
 
 def align_lyrics(vocals_path: Path, lyric_lines: list[str], log: logging.Logger,
-                 language: str):
-    """Force-align lyric lines to the vocal stem. Returns a stable-ts result."""
+                 language: str | None):
+    """Force-align lyric/transcript lines to the audio. Returns a stable-ts result.
+
+    language=None lets Whisper detect it.
+    """
     model = _load_align_model()
     text = "\n".join(lyric_lines)
     try:
@@ -239,6 +293,106 @@ def align_lyrics(vocals_path: Path, lyric_lines: list[str], log: logging.Logger,
     if not result.segments:
         raise PipelineError(ALIGN_FAILURE_MESSAGE)
     return result
+
+
+# ---------------------------------------------------------------------------
+# Stage 2.5 (transcribe mode): Whisper draft
+
+TRANSCRIBE_FAILURE_MESSAGE = (
+    "Couldn't transcribe this file. Check that it has clear vocals or speech, "
+    "or try picking the language instead of Auto-detect."
+)
+
+
+# Transcription can't use the alignment alias for Hinglish: told "en", Whisper turns Hindi
+# audio into a mix of English translation and the odd romanized line (tested, DECISIONS V3.8).
+# "hi" gives the actual words, in Devanagari.
+TRANSCRIBE_ALIASES = {"hinglish": "hi"}
+
+
+def whisper_code(language: str | None, transcribing: bool = False) -> str | None:
+    """Dropdown choice → Whisper language code (None = auto-detect)."""
+    if not language or language == AUTO_LANGUAGE:
+        return None
+    if transcribing and language in TRANSCRIBE_ALIASES:
+        return TRANSCRIBE_ALIASES[language]
+    return config.LANGUAGE_ALIASES.get(language, language)
+
+
+def language_name(code: str | None) -> str:
+    names = dict(config.LANGUAGES)
+    if code in names:
+        return names[code]
+    try:
+        from whisper.tokenizer import LANGUAGES
+        return LANGUAGES.get(code, code).title()
+    except ImportError:
+        return code or "Unknown"
+
+
+# Whisper spends minutes retrying on silence before giving up, so check loudness first.
+SILENCE_DB = -60.0
+
+
+def _max_volume_db(audio_path: Path) -> float:
+    proc = subprocess.run(
+        ["ffmpeg", "-v", "info", "-i", str(audio_path), "-af", "volumedetect", "-f", "null", "-"],
+        capture_output=True, text=True,
+    )
+    match = re.search(r"max_volume: (-?[\d.]+) dB", proc.stderr)
+    return float(match.group(1)) if match else 0.0  # unknown: assume there's sound
+
+
+def transcribe_audio(audio_path: Path, language: str | None, log: logging.Logger) -> dict:
+    """Whisper transcription of the vocals (song) or the audio (speech).
+
+    Returns {"lines": [one phrase per line], "language": detected or forced code}.
+    Uses the same faster-whisper model as alignment, so nothing extra is downloaded.
+    """
+    if _max_volume_db(audio_path) < SILENCE_DB:
+        raise PipelineError("This file is silent, so there's nothing to transcribe.")
+    model = _load_align_model()
+    try:
+        # condition_on_previous_text=False stops Whisper repeating a line in a loop,
+        # which it otherwise tends to do on sung choruses.
+        result = model.transcribe(str(audio_path), language=whisper_code(language, transcribing=True),
+                                  beam_size=5, condition_on_previous_text=False)
+    except MemoryError:
+        raise PipelineError(
+            "This machine ran out of memory. Open config.py and set MODEL_SIZE "
+            "to 'small', then restart the app."
+        )
+    except Exception:
+        log.error("Transcription raised:\n%s", traceback.format_exc())
+        raise PipelineError(TRANSCRIBE_FAILURE_MESSAGE)
+    lines = [seg.text.strip() for seg in result.segments if seg.text.strip()]
+    if not lines:
+        raise PipelineError("Didn't hear any words in this file to transcribe.")
+    return {"lines": lines, "language": result.language}
+
+
+def _latin_share(text: str) -> float:
+    letters = [ch for ch in text if ch.isalpha()]
+    if not letters:
+        return 1.0
+    return sum(1 for ch in letters if "LATIN" in unicodedata.name(ch, "")) / len(letters)
+
+
+def script_note(choice: str, detected: str, draft: str) -> str | None:
+    """Warn when the draft won't be in the script the user probably wants (see DECISIONS V3.8)."""
+    if _latin_share(draft) >= 0.5:
+        return None
+    if choice == "hinglish":
+        return ("Whisper can't write Hindi in Roman letters, so this draft is in Devanagari "
+                "(Hindi script). For Hinglish subtitles, retype it in Roman letters before "
+                "approving. Approve it as it is to get Hindi-script subtitles.")
+    if detected == "ur" and choice == AUTO_LANGUAGE:
+        return ("Detected Urdu, so the draft is in Urdu script. Hindi and Urdu sound the same "
+                "to Whisper: if this is Hindi, pick Hindi (or Hinglish) and transcribe again.")
+    if detected in ("hi", "ur", "pa"):
+        return (f"This draft is in {language_name(detected)} script, not Roman letters. "
+                "For Hinglish subtitles, retype it in Roman letters before approving.")
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -266,8 +420,6 @@ def _split_run(run: list, max_chars: int) -> list[list]:
     text_len = _display_len(text)
     if text_len <= max_chars:
         return [run]
-    import math
-
     target = text_len / math.ceil(text_len / max_chars)
     pieces, cur, cur_len = [], [], 0
     for w in run:
@@ -283,13 +435,28 @@ def _split_run(run: list, max_chars: int) -> list[list]:
     return pieces
 
 
-def chunk_segments(segments, max_chars: int) -> list[dict]:
+def _split_by_duration(piece: list, max_seconds: float | None) -> list[list]:
+    """Split a cue's words into balanced pieces of at most max_seconds (word boundaries only)."""
+    if not max_seconds or len(piece) < 2 or piece[-1].end - piece[0].start <= max_seconds:
+        return [piece]
+    target = (piece[-1].end - piece[0].start) / math.ceil((piece[-1].end - piece[0].start) / max_seconds)
+    pieces, cur = [], []
+    for w in piece:
+        if cur and (w.end - cur[0].start > max_seconds or w.start - cur[0].start >= target):
+            pieces.append(cur)
+            cur = []
+        cur.append(w)
+    pieces.append(cur)
+    return pieces
+
+
+def chunk_segments(segments, max_chars: int, max_seconds: float | None = None) -> list[dict]:
     """Turn aligned lyric lines into single-line cues.
 
     Rules (in priority order): never merge across the user's lyric lines; a comma or
     full stop always ends a cue, and an opening ¿ or ¡ always starts one; no cue exceeds
-    max_chars (split at the most balanced word boundary); cue times come from
-    word-level timestamps.
+    max_chars (split at the most balanced word boundary); with max_seconds (speech), no
+    cue lasts longer than that; cue times come from word-level timestamps.
     """
     cues = []
     for seg in segments:
@@ -308,7 +475,9 @@ def chunk_segments(segments, max_chars: int) -> list[dict]:
         if cur:
             runs.append(cur)
         for run in runs:
-            for piece in _split_run(run, max_chars):
+            pieces = [p for chunk in _split_run(run, max_chars)
+                      for p in _split_by_duration(chunk, max_seconds)]
+            for piece in pieces:
                 cues.append({
                     "start": float(piece[0].start),
                     "end": float(piece[-1].end),
@@ -403,76 +572,162 @@ def _job_logger(job_dir: Path) -> logging.Logger:
     return log
 
 
-def run_pipeline(audio_path, lyrics_text: str, strip_tags: bool = True,
-                 video_format: str = None, language: str = None,
-                 progress_callback=None) -> dict:
-    """Run the full pipeline. Returns a result dict with paths and metadata.
+def flow_steps(mode: str, content_type: str) -> list[tuple[set, str]]:
+    """The progress steps a flow shows, as (stage keys, title). mode: "lyrics" or "transcribe"."""
+    song = content_type == "song"
+    first = ({"prepare", "separate"}, "Isolate vocals" if song else "Prepare audio")
+    if mode == "transcribe":
+        return [first, ({"transcribe"}, "Transcribe"),
+                ({"align"}, "Align transcript"), ({"build"}, "Build subtitles")]
+    return [first, ({"align"}, "Align lyrics" if song else "Align transcript"),
+            ({"build"}, "Build subtitles")]
 
-    video_format: "vertical" (9:16, short lines) or "horizontal" (16:9).
-    language: dropdown choice from config.LANGUAGES; defaults to config.LANGUAGE.
-        Aliases like "hinglish" are mapped to a Whisper code via config.LANGUAGE_ALIASES.
-    progress_callback(step:int, total:int, message:str) drives UI status text.
-    Raises PipelineError with a user-safe message on any failure.
-    """
-    def report(step, total, message):
+
+def make_reporter(steps: list[tuple[set, str]], progress_callback):
+    """report(stage_key, message) → progress_callback(step, total, message)."""
+    def report(key, message):
         if progress_callback:
-            progress_callback(step, total, message)
+            step = next(i for i, (keys, _) in enumerate(steps, start=1) if key in keys)
+            progress_callback(step, len(steps), message)
+    return report
 
-    video_format = video_format or config.FORMAT_DEFAULT
-    language = language or config.LANGUAGE
-    whisper_language = config.LANGUAGE_ALIASES.get(language, language)
-    max_chars = (config.MAX_CHARS_VERTICAL if video_format == "vertical"
-                 else config.MAX_CHARS_HORIZONTAL)
+
+def _unexpected(log: logging.Logger, job_dir: Path):
+    log.error("Unexpected failure:\n%s", traceback.format_exc())
+    return PipelineError(
+        "Something went wrong while processing this file. "
+        f"Check the log at {job_dir / 'log.txt'} for details."
+    )
+
+
+def start_job(audio_path, content_type: str = "song", report=lambda key, msg: None) -> dict:
+    """Validate, create the job folder, get the audio out of a video, and isolate the
+    vocals for songs. Returns the job context the later stages work from."""
     audio_path = Path(audio_path)
+    content_type = content_type if content_type in CONTENT_TYPES else "song"
     duration, duration_warning = validate_audio(audio_path)
-    lyric_lines, lyric_warning = preprocess_lyrics(lyrics_text, strip_tags=strip_tags)
-    warnings = [w for w in (duration_warning, lyric_warning) if w]
 
     job_dir = _make_job_dir(audio_path)
     log = _job_logger(job_dir)
-    log.info("Input: %s (%.1fs), %d lyric lines, strip_tags=%s, format=%s (max %d chars/line), "
-             "language=%s (whisper code %s)", audio_path.name, duration, len(lyric_lines),
-             strip_tags, video_format, max_chars, language, whisper_language)
-    for w in warnings:
-        log.warning(w)
+    log.info("Input: %s (%.1fs), content=%s", audio_path.name, duration, content_type)
+    ctx = {
+        "source_file": audio_path.name, "stem": audio_path.stem, "job_dir": job_dir,
+        "log": log, "duration": duration, "content_type": content_type,
+        "warnings": [duration_warning] if duration_warning else [], "timings": {},
+        "vocals_path": None, "detected_language": None,
+    }
+    if duration_warning:
+        log.warning(duration_warning)
 
-    input_copy = job_dir / f"input{audio_path.suffix.lower()}"
-    shutil.copy2(audio_path, input_copy)
-
-    timings = {}
     try:
-        report(1, 3, "Step 1 of 3 — isolating vocals (roughly 10–60 seconds)…")
         t0 = time.perf_counter()
-        vocals_path = separate_vocals(input_copy, job_dir, log)
-        timings["separate_seconds"] = round(time.perf_counter() - t0, 2)
-        log.info("Vocals isolated in %.1fs -> %s", timings["separate_seconds"], vocals_path.name)
+        if is_video(audio_path):
+            # Keep only the audio: the video can be gigabytes and isn't needed again.
+            report("prepare", "Step 1 — extracting the audio from the video…")
+            input_audio = extract_audio(audio_path, job_dir / "input.wav")
+            log.info("Extracted audio from %s", audio_path.name)
+        else:
+            input_audio = job_dir / f"input{audio_path.suffix.lower()}"
+            shutil.copy2(audio_path, input_audio)
+        ctx["input_audio"] = input_audio
+        if content_type == "song":
+            report("separate", "Step 1 — isolating vocals (roughly 10–60 seconds)…")
+            ctx["vocals_path"] = separate_vocals(input_audio, job_dir, log)
+            ctx["source_path"] = ctx["vocals_path"]
+            log.info("Vocals isolated -> %s", ctx["vocals_path"].name)
+        else:
+            ctx["source_path"] = input_audio  # speech: no music to remove
+        ctx["timings"]["separate_seconds"] = round(time.perf_counter() - t0, 2)
+    except PipelineError:
+        raise
+    except Exception:
+        raise _unexpected(log, job_dir)
+    return ctx
 
-        report(2, 3, "Step 2 of 3 — aligning lyrics (first run loads the model, "
-                     "roughly 30 seconds to 2 minutes)…")
+
+def run_transcription(ctx: dict, language: str = None, report=lambda key, msg: None) -> dict:
+    """Whisper draft of what's sung or said, one phrase per line, for the user to edit."""
+    language = language or config.TRANSCRIBE_LANGUAGE
+    log, job_dir = ctx["log"], ctx["job_dir"]
+    report("transcribe", "Transcribing with Whisper (first run loads the model, "
+                         "roughly 30 seconds to 2 minutes)…")
+    try:
         t0 = time.perf_counter()
-        result = align_lyrics(vocals_path, lyric_lines, log, whisper_language)
+        result = transcribe_audio(ctx["source_path"], language, log)
+        ctx["timings"]["transcribe_seconds"] = round(time.perf_counter() - t0, 2)
+        ctx["detected_language"] = result["language"]
+        draft = "\n".join(result["lines"])
+        (job_dir / "transcript-draft.txt").write_text(draft + "\n", encoding="utf-8")
+        log.info("Transcribed %d lines in %.1fs, language choice=%s, whisper language=%s",
+                 len(result["lines"]), ctx["timings"]["transcribe_seconds"], language,
+                 result["language"])
+    except PipelineError:
+        raise
+    except Exception:
+        raise _unexpected(log, job_dir)
+    return {
+        "draft_text": draft,
+        "detected_language": result["language"],
+        "detected_language_name": language_name(result["language"]),
+        "script_note": script_note(language, result["language"], draft),
+    }
+
+
+def align_and_write(ctx: dict, lyrics_text: str, strip_tags: bool = True,
+                    video_format: str = None, language: str = None,
+                    report=lambda key, msg: None) -> dict:
+    """Align the given (or approved) text to the job's audio and write the SRT and cue data.
+
+    For songs this reuses the vocals isolated in start_job, so nothing is separated twice.
+    """
+    video_format = video_format or config.FORMAT_DEFAULT
+    language = language or config.LANGUAGE
+    # Auto-detect: reuse what transcription detected; without a transcription Whisper detects.
+    whisper_language = (ctx["detected_language"] if language == AUTO_LANGUAGE
+                        else whisper_code(language))
+    if language == "hinglish" and _latin_share(lyrics_text) < 0.5:
+        whisper_language = "hi"  # an approved Devanagari draft with Hinglish still selected
+    max_chars = (config.MAX_CHARS_VERTICAL if video_format == "vertical"
+                 else config.MAX_CHARS_HORIZONTAL)
+    max_seconds = config.MAX_CUE_SECONDS_SPEECH if ctx["content_type"] == "speech" else None
+    lyric_lines, lyric_warning = preprocess_lyrics(lyrics_text, strip_tags=strip_tags)
+    log, job_dir, timings = ctx["log"], ctx["job_dir"], ctx["timings"]
+    warnings = ctx["warnings"] + ([lyric_warning] if lyric_warning else [])
+    log.info("Aligning %d lines, strip_tags=%s, format=%s (max %d chars/line, max %s s/cue), "
+             "language=%s (whisper code %s)", len(lyric_lines), strip_tags, video_format,
+             max_chars, max_seconds, language, whisper_language)
+    if lyric_warning:
+        log.warning(lyric_warning)
+    (job_dir / "lyrics.txt").write_text("\n".join(lyric_lines) + "\n", encoding="utf-8")
+
+    try:
+        song = ctx["content_type"] == "song"
+        report("align", f"Aligning {'lyrics' if song else 'the transcript'} (first run loads "
+                        "the model, roughly 30 seconds to 2 minutes)…")
+        t0 = time.perf_counter()
+        result = align_lyrics(ctx["source_path"], lyric_lines, log, whisper_language)
         timings["align_seconds"] = round(time.perf_counter() - t0, 2)
         log.info("Aligned %d segments in %.1fs", len(result.segments), timings["align_seconds"])
 
-        report(3, 3, "Step 3 of 3 — building SRT…")
+        report("build", "Building the SRT…")
         t0 = time.perf_counter()
-        cues = chunk_segments(result.segments, max_chars)
-        cues = sanitize_cues(cues)
-
-        srt_path = job_dir / f"{audio_path.stem}.srt"
+        cues = sanitize_cues(chunk_segments(result.segments, max_chars, max_seconds))
+        srt_path = job_dir / f"{ctx['stem']}.srt"
         write_srt(cues, srt_path)
 
         cues_json = {
-            "source_file": audio_path.name,
+            "source_file": ctx["source_file"],
+            "content_type": ctx["content_type"],
             "video_format": video_format,
             "max_chars_per_line": max_chars,
+            "max_cue_seconds": max_seconds,
             "early_appear_seconds": config.EARLY_APPEAR_SECONDS,
             "model_size": config.MODEL_SIZE,
             "language": language,
-            "whisper_language": whisper_language,
-            "separator_engine": config.SEPARATOR_ENGINE,
-            "separator_model": config.SEPARATOR_MODEL,
-            "duration_seconds": round(duration, 2),
+            "whisper_language": whisper_language or getattr(result, "language", None),
+            "separator_engine": config.SEPARATOR_ENGINE if song else None,
+            "separator_model": config.SEPARATOR_MODEL if song else None,
+            "duration_seconds": round(ctx["duration"], 2),
             "timings": timings,
             "cues": cues,
         }
@@ -480,13 +735,13 @@ def run_pipeline(audio_path, lyrics_text: str, strip_tags: bool = True,
             json.dumps(cues_json, indent=2, ensure_ascii=False), encoding="utf-8"
         )
 
-        stem_path = export_stem(vocals_path, job_dir)
+        stem_path = export_stem(ctx["vocals_path"], job_dir) if song else None
         timings["outputs_seconds"] = round(time.perf_counter() - t0, 2)
         log.info("Outputs written in %.1fs. Timings: %s", timings["outputs_seconds"], timings)
-
         return {
             "srt_path": srt_path,
             "stem_path": stem_path,
+            "audio_path": ctx["input_audio"],
             "cues_path": job_dir / "cues.json",
             "job_dir": job_dir,
             "cues": cues,
@@ -496,44 +751,77 @@ def run_pipeline(audio_path, lyrics_text: str, strip_tags: bool = True,
     except PipelineError:
         raise
     except Exception:
-        log.error("Unexpected failure:\n%s", traceback.format_exc())
-        raise PipelineError(
-            "Something went wrong while processing this song. "
-            f"Check the log at {job_dir / 'log.txt'} for details."
-        )
+        raise _unexpected(log, job_dir)
+
+
+def run_pipeline(audio_path, lyrics_text: str, strip_tags: bool = True,
+                 video_format: str = None, language: str = None,
+                 progress_callback=None, content_type: str = "song") -> dict:
+    """Lyrics/script flow in one call. Returns a result dict with paths and metadata.
+
+    video_format: "vertical" (9:16, short lines) or "horizontal" (16:9).
+    language: dropdown choice from config.LANGUAGES; defaults to config.LANGUAGE.
+        Aliases like "hinglish" are mapped to a Whisper code via config.LANGUAGE_ALIASES.
+    content_type: "song" isolates the vocals first; "speech" aligns the audio as is.
+    progress_callback(step:int, total:int, message:str) drives UI status text.
+    Raises PipelineError with a user-safe message on any failure.
+    """
+    preprocess_lyrics(lyrics_text, strip_tags=strip_tags)  # fail fast, before heavy work
+    report = make_reporter(flow_steps("lyrics", content_type), progress_callback)
+    ctx = start_job(audio_path, content_type, report)
+    return align_and_write(ctx, lyrics_text, strip_tags=strip_tags, video_format=video_format,
+                           language=language, report=report)
 
 
 # ---------------------------------------------------------------------------
 # CLI
 
+def _progress(step, total, message):
+    print(f"[{step}/{total}] {message}")
+
+
 def main(argv: list[str]) -> int:
     codes = [code for code, _ in config.LANGUAGES]
-    usage = ("Usage: python pipeline.py <audio> <lyrics.txt> [vertical|horizontal] "
-             f"[{'|'.join(codes)}]")
-    if not 2 <= len(argv) <= 4:
+    usage = ("Usage: python pipeline.py <audio|video> <lyrics.txt> [vertical|horizontal] "
+             f"[{'|'.join(codes)}] [song|speech]\n"
+             f"       python pipeline.py --transcribe <audio|video> [{'|'.join(codes)}] [song|speech]")
+    transcribe = bool(argv) and argv[0] == "--transcribe"
+    if transcribe:
+        argv = argv[1:]
+    positional = 1 if transcribe else 2
+    if not positional <= len(argv) <= positional + 3:
         print(usage)
         return 2
-    audio, lyrics_file = Path(argv[0]), Path(argv[1])
-    video_format = language = None
-    for arg in argv[2:]:
-        if arg in ("vertical", "horizontal") and video_format is None:
+    video_format = language = content_type = None
+    for arg in argv[positional:]:
+        if arg in ("vertical", "horizontal") and video_format is None and not transcribe:
             video_format = arg
         elif arg in codes and language is None:
             language = arg
+        elif arg in CONTENT_TYPES and content_type is None:
+            content_type = arg
         else:
             print(usage)
             return 2
-    lyrics_text = lyrics_file.read_text(encoding="utf-8")
-
-    def progress(step, total, message):
-        print(f"[{step}/{total}] {message}")
+    content_type = content_type or "song"
 
     try:
-        result = run_pipeline(audio, lyrics_text,
-                              strip_tags=config.STRIP_TAGS_DEFAULT,
-                              video_format=video_format,
-                              language=language,
-                              progress_callback=progress)
+        if transcribe:
+            report = make_reporter(flow_steps("transcribe", content_type), _progress)
+            ctx = start_job(Path(argv[0]), content_type, report)
+            draft = run_transcription(ctx, language, report)
+            print(f"Job folder: {ctx['job_dir']}")
+            print(f"Language:   {draft['detected_language_name']} ({draft['detected_language']})")
+            if draft["script_note"]:
+                print(f"NOTE: {draft['script_note']}")
+            print(f"Timings:    {ctx['timings']}")
+            print("--- draft ---")
+            print(draft["draft_text"])
+            return 0
+        result = run_pipeline(Path(argv[0]), Path(argv[1]).read_text(encoding="utf-8"),
+                              strip_tags=config.STRIP_TAGS_DEFAULT, video_format=video_format,
+                              language=language, progress_callback=_progress,
+                              content_type=content_type)
     except PipelineError as e:
         print(f"FAILED: {e}")
         return 1

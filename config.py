@@ -3,12 +3,17 @@
 # Whisper model size for lyric alignment: "small" is ~3x faster, "medium" is more accurate.
 MODEL_SIZE = "medium"
 
-# Default lyrics/vocal language (ISO code). Users pick per job in the UI; this is preselected.
+# Default lyrics/vocal language (ISO code). Users pick per job in the UI; this is preselected
+# in "I have the lyrics/script" mode.
 LANGUAGE = "en"
+
+# Preselected language in "Transcribe for me" mode. "auto" lets Whisper detect it.
+TRANSCRIBE_LANGUAGE = "auto"
 
 # Languages offered in the UI dropdown as (Whisper code, name). No Chinese/Japanese/Thai yet:
 # they write without spaces and need a different line splitter.
 LANGUAGES = [
+    ("auto", "Auto-detect"),
     ("en", "English"),
     ("hi", "Hindi"),
     ("hinglish", "Hinglish"),
@@ -48,6 +53,10 @@ MAX_MINUTES_HARD = 20
 # Refuse uploads larger than this many megabytes (a 20-minute 48 kHz 32-bit stereo WAV is ~460 MB).
 MAX_UPLOAD_MB = 500
 
+# Same for video files (MP4, MOV, MKV, WEBM): a 20-minute 4K phone video is about 1–2 GB, and
+# only its audio is kept (extracted with ffmpeg; the video itself isn't copied into jobs/).
+MAX_VIDEO_UPLOAD_MB = 4096
+
 # Forget finished jobs in the app after this many minutes (download links stop working).
 # Their files stay in jobs/ on disk either way.
 JOB_RETENTION_MINUTES = 120
@@ -65,6 +74,10 @@ MAX_CHARS_HORIZONTAL = 42
 
 # Default video format in the UI: "vertical" (9:16 Reels/TikTok) or "horizontal" (16:9 YouTube).
 FORMAT_DEFAULT = "vertical"
+
+# Speech (podcasts, interviews, voiceovers): no subtitle stays on screen longer than this,
+# on top of the character caps. Songs aren't capped (a held note can be long).
+MAX_CUE_SECONDS_SPEECH = 7.0
 
 # Show each subtitle this many seconds before the vocal actually starts (karaoke practice,
 # text never feels late). Set to 0 to disable.
