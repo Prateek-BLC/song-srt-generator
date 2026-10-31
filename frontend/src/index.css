@@ -88,6 +88,28 @@ body::before {
   min-height: 100vh;
 }
 
+/* ---------- update banner ---------- */
+.update-banner {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 16px;
+  padding: 10px 14px;
+  border: 1px solid var(--accent);
+  border-radius: 8px;
+  background: var(--accent-soft);
+  color: var(--ink-soft);
+  font-size: 13.5px;
+  text-decoration: none;
+}
+.update-banner b { color: var(--accent); font-weight: 600; }
+.update-banner:hover b { color: var(--accent-hover); }
+.update-dot {
+  width: 8px; height: 8px; flex-shrink: 0;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
 /* ---------- masthead ---------- */
 .masthead {
   display: flex;

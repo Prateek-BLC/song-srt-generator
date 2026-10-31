@@ -21,10 +21,14 @@ from pathlib import Path
 import config
 
 ROOT = Path(__file__).parent
-JOBS_DIR = ROOT / "jobs"
-MODELS_DIR = ROOT / "models"
+# Writable data (jobs, models, uploads). Defaults to the app folder; the macOS .app
+# sets SRT_DATA_DIR to ~/Library/Application Support/Song SRT Generator because its
+# bundle is read-only.
+DATA_DIR = Path(os.environ.get("SRT_DATA_DIR") or ROOT)
+JOBS_DIR = DATA_DIR / "jobs"
+MODELS_DIR = DATA_DIR / "models"
 
-# Keep all downloaded models inside the app folder — the install is fully
+# Keep all downloaded models inside the data folder — the install is fully
 # self-contained and deleting the folder removes everything.
 os.environ.setdefault("HF_HOME", str(MODELS_DIR / "hf"))
 

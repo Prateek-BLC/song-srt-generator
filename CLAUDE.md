@@ -24,6 +24,7 @@ The scripted way (preferred): run `bash install.command` — zero prerequisites 
 - **Apple Silicon Mac:** `pip install -r requirements.txt` (pinned; includes the MLX GPU separation engine). Keep `SEPARATOR_ENGINE = "mlx"` in config.py.
 - **Windows x64 (untested on real hardware):** the scripted way is `install.bat` (bundled `bin\uv.exe` + ffmpeg; build the zip with `./make_release.sh <ver> --windows`). Manual: `pip install -r requirements-windows.txt` (unpinned, uses the `audio-separator` CPU engine) and set `SEPARATOR_ENGINE = "cpu"` in config.py (the Windows release zip does this for you). See DECISIONS.md V3.2.
 - **Intel Mac:** not supported. `install.command` refuses non-arm64 Macs and there is no Intel build.
+- **Collaborators don't use this guide:** they install "Song SRT Generator.app" from GitHub Releases (built by `./make_release.sh <ver>` from `macapp/`; see DECISIONS.md V3.6). Its data lives in `~/Library/Application Support/Song SRT Generator/`, not in this folder. `VERSION` is the single source of the version number.
 
 ## 4. First-run verification
 

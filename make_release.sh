@@ -1,24 +1,35 @@
 #!/bin/bash
 # Build a shippable release zip of the Song SRT Generator.
 #
-#   ./make_release.sh 3.2.0                  → Mac (Apple Silicon) lite zip
-#   ./make_release.sh 3.2.0 --full           → Mac zip with models baked in
-#   ./make_release.sh 3.2.0 --windows        → Windows (x64) lite zip
+#   ./make_release.sh 3.6                    → Song-SRT-Generator-3.6-mac.zip (the .app, Apple Silicon)
+#   ./make_release.sh 3.6 --full             → ...-mac-full.zip, the .app with models baked in
+#   ./make_release.sh 3.6 --windows          → ...-win-lite.zip (x64 folder + Install.bat)
 #
-# Output lands in dist-release/. Downloads (uv, ffmpeg) are cached in
-# release-assets/ so rebuilding is fast.
+# The version must match the VERSION file (the single source of version numbers);
+# leave it out to use VERSION as is. Output lands in dist-release/. Downloads
+# (uv, ffmpeg) are cached in release-assets/ so rebuilding is fast.
 set -euo pipefail
 cd "$(dirname "$0")"
 
-VERSION="${1:-$(git describe --tags --abbrev=0 2>/dev/null || echo dev)}"
+FILE_VERSION="$(tr -d '[:space:]' < VERSION)"
+VERSION="$FILE_VERSION"
+if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then
+  VERSION="$1"
+  shift
+fi
+if [ "$VERSION" != "$FILE_VERSION" ]; then
+  echo "!! VERSION file says ${FILE_VERSION}, not ${VERSION}. Edit VERSION first (it's the single source)."
+  exit 1
+fi
 VARIANT="lite"
 PLATFORM="mac"
-for arg in "${@:2}"; do
+for arg in "$@"; do
   [ "$arg" = "--full" ] && VARIANT="full"
   [ "$arg" = "--windows" ] && PLATFORM="win"
 done
 
 NAME="Song-SRT-Generator-${VERSION}-${PLATFORM}-${VARIANT}"
+[ "$PLATFORM" = "mac" ] && [ "$VARIANT" = "lite" ] && NAME="Song-SRT-Generator-${VERSION}-mac"
 # Windows: short inner folder name — deep paths inside .venv/models can hit
 # Windows' 260-character path limit if the user unzips somewhere nested.
 FOLDER="$NAME"
@@ -70,18 +81,57 @@ fi
 # 3. Stage the app
 echo "==> Staging files"
 rm -rf "$STAGE"
-mkdir -p "$STAGE/bin" "$STAGE/frontend"
-cp app.py pipeline.py config.py warmup.py README.md DECISIONS.md "$STAGE/"
-cp -R sample "$STAGE/sample"
-cp -R frontend/dist "$STAGE/frontend/dist"
 
 if [ "$PLATFORM" = "mac" ]; then
-  cp requirements.txt "$STAGE/"
-  cp "$ASSETS/uv" "$ASSETS/ffmpeg" "$ASSETS/ffprobe" "$STAGE/bin/"
-  cp install.command "$STAGE/Install.command"
-  cp start.command "$STAGE/Start.command"
-  chmod +x "$STAGE/Install.command" "$STAGE/Start.command" "$STAGE"/bin/*
+  # Read-only .app bundle. All writable state (Python, venv, models, jobs/) goes to
+  # ~/Library/Application Support/Song SRT Generator/ on first launch (see macapp/launcher).
+  APP="$STAGE/Song SRT Generator.app"
+  RES="$APP/Contents/Resources"
+  mkdir -p "$APP/Contents/MacOS" "$RES/bin" "$RES/app/frontend"
+  sed "s/__VERSION__/${VERSION}/g" macapp/Info.plist > "$APP/Contents/Info.plist"
+  printf 'APPL????' > "$APP/Contents/PkgInfo"
+  cp macapp/launcher "$APP/Contents/MacOS/launcher"
+  cp macapp/launcher.py macapp/progress.html macapp/AppIcon.icns "$RES/"
+  cp "$ASSETS/uv" "$ASSETS/ffmpeg" "$ASSETS/ffprobe" "$RES/bin/"
+  cp app.py pipeline.py config.py warmup.py VERSION requirements.txt README.md DECISIONS.md "$RES/app/"
+  cp -R sample "$RES/app/sample"
+  cp -R frontend/dist "$RES/app/frontend/dist"
+  chmod +x "$APP/Contents/MacOS/launcher" "$RES"/bin/*
+  if [ "$VARIANT" = "full" ]; then
+    echo "==> Baking models into the app (full variant)"
+    if [ ! -d models ]; then
+      echo "!! models/ not found — run warmup.py once first"; exit 1
+    fi
+    cp -R models "$RES/models"
+  fi
+cat > "$STAGE/READ ME FIRST.txt" <<'EOF'
+SONG SRT GENERATOR — HOW TO INSTALL (Apple Silicon Macs: M1, M2, M3, M4)
+
+1. Drag "Song SRT Generator" into your Applications folder.
+
+2. Double-click it. macOS says "Apple could not verify…" — that's its
+   warning for any app not from the App Store. Click Done (NOT Move to Bin).
+   Then open System Settings > Privacy & Security, scroll down, click
+   "Open Anyway" next to Song SRT Generator, and confirm.
+   You only do this once per version.
+
+3. The first launch sets everything up (5–20 minutes, needs internet once:
+   about 2.5 GB of Python packages and AI models). Leave the window open
+   until the app appears.
+
+Updates: the app shows a banner when a new version is out. Download the new
+zip, replace the app in Applications, and do step 2 again. Your models are
+kept, so an update takes about a minute.
+
+Uninstall: delete the app and the folder
+~/Library/Application Support/Song SRT Generator
+If the setup window shows an error, click "Show the log" and send Aman the file.
+EOF
 else
+  mkdir -p "$STAGE/bin" "$STAGE/frontend"
+  cp app.py pipeline.py config.py warmup.py VERSION README.md DECISIONS.md "$STAGE/"
+  cp -R sample "$STAGE/sample"
+  cp -R frontend/dist "$STAGE/frontend/dist"
   cp requirements-windows.txt "$STAGE/"
   cp "$ASSETS/uv.exe" "$ASSETS/ffmpeg.exe" "$ASSETS/ffprobe.exe" "$STAGE/bin/"
   cp install.bat "$STAGE/Install.bat"
@@ -97,37 +147,6 @@ else
   done
   # Windows uses the cross-platform CPU separation engine.
   sed -i '' 's/^SEPARATOR_ENGINE = .*/SEPARATOR_ENGINE = "cpu"/' "$STAGE/config.py"
-fi
-
-if [ "$PLATFORM" = "mac" ]; then
-cat > "$STAGE/READ ME FIRST.txt" <<'EOF'
-SONG SRT GENERATOR — HOW TO INSTALL (Apple Silicon Macs)
-
-STEP 1 — install (one time, 3 small moves):
-   a. Open Terminal: press Cmd+Space, type "terminal", press Enter.
-   b. In the Terminal window type exactly:   bash
-      then a SPACE, then DRAG the file "Install.command" from this
-      folder into the Terminal window (its path appears by itself).
-   c. Press Enter. Wait for the window to say PASS.
-      (First time takes 5–20 minutes — it downloads the AI models.
-      Leave the window alone until PASS.)
-
-STEP 2 — use it:
-   Double-click "Start.command". Your browser opens with the app.
-
-That's it. From tomorrow on, only step 2.
-
-WHY THE WEIRD TERMINAL STEP? If you double-click Install.command instead,
-macOS shows "Apple could not verify…" and blocks it — that's just Apple's
-warning for any app not from the App Store. Running it through Terminal
-skips that. (Alternative if you already double-clicked and got blocked:
-click Done — NOT Move to Bin — then System Settings > Privacy & Security,
-scroll down, click "Open Anyway", and it will run.)
-
-Everything installs inside this folder only. To uninstall, delete the folder.
-If the installer says anything other than PASS, send Aman a screenshot.
-EOF
-else
 cat > "$STAGE/READ ME FIRST.txt" <<'EOF'
 SONG SRT GENERATOR - HOW TO INSTALL (Windows, 64-bit)
 
@@ -159,23 +178,19 @@ EOF
 perl -pi -e 's/\n/\r\n/' "$STAGE/READ ME FIRST.txt"
 fi
 
-# 4. Full variant (mac only): bake the models in
-if [ "$VARIANT" = "full" ] && [ "$PLATFORM" = "mac" ]; then
-  echo "==> Baking models into the zip (full variant)"
-  if [ ! -d models ]; then
-    echo "!! models/ not found — run warmup.py once first"; exit 1
-  fi
-  cp -R models "$STAGE/models"
-fi
-
-# 5. Zip it
+# 4. Zip it
 echo "==> Zipping"
-(cd dist-release && rm -f "${NAME}.zip" && zip -rq "${NAME}.zip" "$FOLDER")
+if [ "$PLATFORM" = "mac" ]; then
+  # The zip holds the .app itself (plus the read-me), not a wrapping folder.
+  (cd "$STAGE" && rm -f "../${NAME}.zip" && zip -rqy "../${NAME}.zip" "Song SRT Generator.app" "READ ME FIRST.txt")
+else
+  (cd dist-release && rm -f "${NAME}.zip" && zip -rq "${NAME}.zip" "$FOLDER")
+fi
 SIZE=$(du -h "dist-release/${NAME}.zip" | cut -f1)
 echo ""
 echo "✓ dist-release/${NAME}.zip  (${SIZE})"
 if [ "$PLATFORM" = "mac" ]; then
-  echo "  Teammate steps: unzip → Terminal: bash Install.command → Start.command"
+  echo "  Teammate steps: unzip → drag to Applications → open → Open Anyway (Privacy & Security) → wait for setup"
 else
   echo "  Teammate steps: unzip → Install.bat (Run anyway) → Start.bat"
   echo "  NOTE: untested on real Windows hardware until a teammate runs it."

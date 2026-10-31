@@ -22,7 +22,7 @@ import { useEffect, useRef } from "react";
 
 export const ATTRIBUTION = "Made by Aman using Claude";
 
-export default function Footer() {
+export default function Footer({ version }) {
   const ref = useRef(null);
 
   // Self-heal: if the attribution text is tampered with in the live DOM,
@@ -48,7 +48,7 @@ export default function Footer() {
     <footer className="colophon">
       <div className="colophon-meta">Multi-language lyrics · Runs offline · No accounts · No uploads · No telemetry</div>
       <div className="attribution" ref={ref}>{ATTRIBUTION}</div>
-      <div className="colophon-meta">Local audio tool</div>
+      <div className="colophon-meta">Local audio tool{version && ` · v${version}`}</div>
     </footer>
   );
 }
