@@ -2,7 +2,7 @@
 
 All logic lives here; app.py is UI-only. Also runnable from the CLI:
 
-    python pipeline.py <audio> <lyrics.txt> [vertical|horizontal] [language code]
+    python pipeline.py <audio> <lyrics.txt> [vertical|horizontal] [language, e.g. es or hinglish]
 """
 
 import json
@@ -21,10 +21,14 @@ from pathlib import Path
 import config
 
 ROOT = Path(__file__).parent
-JOBS_DIR = ROOT / "jobs"
-MODELS_DIR = ROOT / "models"
+# Writable data (jobs, models, uploads). Defaults to the app folder; the macOS .app
+# sets SRT_DATA_DIR to ~/Library/Application Support/Song SRT Generator because its
+# bundle is read-only.
+DATA_DIR = Path(os.environ.get("SRT_DATA_DIR") or ROOT)
+JOBS_DIR = DATA_DIR / "jobs"
+MODELS_DIR = DATA_DIR / "models"
 
-# Keep all downloaded models inside the app folder — the install is fully
+# Keep all downloaded models inside the data folder — the install is fully
 # self-contained and deleting the folder removes everything.
 os.environ.setdefault("HF_HOME", str(MODELS_DIR / "hf"))
 
@@ -405,7 +409,8 @@ def run_pipeline(audio_path, lyrics_text: str, strip_tags: bool = True,
     """Run the full pipeline. Returns a result dict with paths and metadata.
 
     video_format: "vertical" (9:16, short lines) or "horizontal" (16:9).
-    language: Whisper language code of the lyrics; defaults to config.LANGUAGE.
+    language: dropdown choice from config.LANGUAGES; defaults to config.LANGUAGE.
+        Aliases like "hinglish" are mapped to a Whisper code via config.LANGUAGE_ALIASES.
     progress_callback(step:int, total:int, message:str) drives UI status text.
     Raises PipelineError with a user-safe message on any failure.
     """
@@ -415,6 +420,7 @@ def run_pipeline(audio_path, lyrics_text: str, strip_tags: bool = True,
 
     video_format = video_format or config.FORMAT_DEFAULT
     language = language or config.LANGUAGE
+    whisper_language = config.LANGUAGE_ALIASES.get(language, language)
     max_chars = (config.MAX_CHARS_VERTICAL if video_format == "vertical"
                  else config.MAX_CHARS_HORIZONTAL)
     audio_path = Path(audio_path)
@@ -425,8 +431,8 @@ def run_pipeline(audio_path, lyrics_text: str, strip_tags: bool = True,
     job_dir = _make_job_dir(audio_path)
     log = _job_logger(job_dir)
     log.info("Input: %s (%.1fs), %d lyric lines, strip_tags=%s, format=%s (max %d chars/line), "
-             "language=%s", audio_path.name, duration, len(lyric_lines), strip_tags,
-             video_format, max_chars, language)
+             "language=%s (whisper code %s)", audio_path.name, duration, len(lyric_lines),
+             strip_tags, video_format, max_chars, language, whisper_language)
     for w in warnings:
         log.warning(w)
 
@@ -444,7 +450,7 @@ def run_pipeline(audio_path, lyrics_text: str, strip_tags: bool = True,
         report(2, 3, "Step 2 of 3 — aligning lyrics (first run loads the model, "
                      "roughly 30 seconds to 2 minutes)…")
         t0 = time.perf_counter()
-        result = align_lyrics(vocals_path, lyric_lines, log, language)
+        result = align_lyrics(vocals_path, lyric_lines, log, whisper_language)
         timings["align_seconds"] = round(time.perf_counter() - t0, 2)
         log.info("Aligned %d segments in %.1fs", len(result.segments), timings["align_seconds"])
 
@@ -463,6 +469,7 @@ def run_pipeline(audio_path, lyrics_text: str, strip_tags: bool = True,
             "early_appear_seconds": config.EARLY_APPEAR_SECONDS,
             "model_size": config.MODEL_SIZE,
             "language": language,
+            "whisper_language": whisper_language,
             "separator_engine": config.SEPARATOR_ENGINE,
             "separator_model": config.SEPARATOR_MODEL,
             "duration_seconds": round(duration, 2),

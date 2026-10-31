@@ -84,6 +84,28 @@ Recorded 2026-07-15 from Aman's answers.
 - Footer meta text changed from "English lyrics" to "Multi-language lyrics". The attribution line is untouched.
 - Verified: warmup.py PASS (English, unchanged 4 cues); the sample run through the CLI with `es` recorded `"language": "es"` in cues.json and `language=es` in the log.
 
+## V3.5 — Hinglish option (2026-10-29)
+
+- **"Hinglish" added to the dropdown**, right after English and Hindi (order is now English, Hindi, Hinglish, then the rest; Hindi moved up from third to sit next to it). It's for Hindi lyrics written in Roman script.
+- Whisper has no Hinglish code, so `config.LANGUAGE_ALIASES = {"hinglish": "en"}` maps the choice to the code used for alignment. `run_pipeline` resolves the alias; everything else (API validation, localStorage, CLI) treats `hinglish` as a normal choice.
+- **Both are recorded:** `cues.json` has `"language"` (the choice, e.g. `"hinglish"`) and `"whisper_language"` (the code used, e.g. `"en"`); the job log's `Input:` line reads `language=hinglish (whisper code en)`. Non-alias choices record the same value in both.
+- **Real-song test (Aman):** "Kabhi Kabhi Aditi" with Roman-script lyrics, aligned with English selected — timing was perfect. That is the basis for mapping Hinglish to `en` rather than `hi` (the Hindi model expects Devanagari text).
+- CLI accepts `hinglish` like any other code. `frontend/dist` was rebuilt; the dropdown reads its list from `/api/meta`, so no frontend source change was needed.
+
+## V3.6 — macOS app from GitHub Releases (2026-10-31)
+
+- **Collaborators now get "Song SRT Generator.app"** (Apple Silicon) from GitHub Releases instead of the Terminal-installed folder. `./make_release.sh <ver>` builds `Song-SRT-Generator-<ver>-mac.zip` holding the .app and a `READ ME FIRST.txt`. `--windows` is unchanged; `--full` now bakes the models into the .app (copied to the data folder on first launch). `install.command` / `start.command` stay in the repo for running from a checkout, but no longer ship.
+- **The bundle is read-only.** Code is in `Contents/Resources/app`, uv and static ffmpeg/ffprobe in `Contents/Resources/bin` (same sources as before). Everything writable lives in `~/Library/Application Support/Song SRT Generator/`: uv's Python 3.10, `venv/`, `models/` (`HF_HOME` too), `jobs/`, `uploads/`, `install.log`, `pycache/` (`PYTHONPYCACHEPREFIX`, so nothing is written into the bundle) and the web view's storage. `pipeline.py` reads `SRT_DATA_DIR` for jobs/models (and app.py for uploads); unset, it falls back to the app folder, so checkouts and the Windows zip behave as before. Verified by launching a `chmod -R a-w` copy of the bundle.
+- **Launch flow.** `Contents/MacOS/launcher` (bash) refuses Intel Macs, copies the bundled tools into the data folder's `bin/` and strips their quarantine flag there (the bundle can't be modified). On the very first launch it fetches Python plus pywebview (~40 MB, under a minute) behind a plain "Getting ready" dialog, because the progress window itself needs them. `Contents/Resources/launcher.py` then shows the progress window (`macapp/progress.html`): step 1 installs `requirements.txt` with uv, step 2 runs `warmup.py`, which must PASS. A failure shows the reason, a **Try again** button and **Show the log**. Success writes `installed.json` (version + hash of requirements.txt).
+- **Updates reuse the data folder.** Setup re-runs only when `installed.json`'s version or requirements hash differs from the bundle's: uv installs just the changed packages and warmup re-verifies with the models already on disk, so models are never downloaded again.
+- **Native window, no Terminal.** pywebview 6.2.1 (Cocoa/WKWebView, pinned with its pyobjc deps in requirements.txt) shows the UI; uvicorn runs on a thread in the same process. Closing the window ends the process, which stops the server and any running job. `ALLOW_DOWNLOADS` is on so the SRT/vocals links open a save dialog; `private_mode=False` keeps theme and language picks between launches. The bash script `exec`s Python, so the Dock and menu bar show the app's name and icon.
+- **Single instance.** `launcher.py` holds an `flock` on `app.lock` (with its PID). A second copy activates that PID and POSTs `/api/focus` (un-minimizes the window via `app.on_focus_request`), then exits. Port already taken (e.g. `start.command` running) → the window says so with Try again.
+- **`VERSION` file is the single source of the version number.** app.py serves it in `/api/meta` (shown in the footer meta line as "Local audio tool · vX"), make_release.sh refuses a version argument that doesn't match it and stamps it into Info.plist.
+- **Update check (owner-approved exception to "no cloud calls at runtime").** `/api/update` asks `api.github.com/repos/brightlifecreations-projects/song-srt-generator/releases/latest` once per app run (4 s timeout) and the UI shows an "Update available" banner linking to the release page if its tag is newer. Any failure — offline, rate limit, no releases — returns no banner and isn't cached. It sends no app data. `CHECK_FOR_UPDATES = False` in config.py turns it off. Links with `target="_blank"` open in the default browser.
+- **App icon:** `macapp/AppIcon.icns`, drawn by `macapp/make_icon.py` (Pillow + iconutil) in the UI's indigo (`#6b7dff` → `#2c3fd1`): waveform over two caption bars.
+- **Unsigned, so Gatekeeper asks once per downloaded version:** double-click → "Apple could not verify…" → Done → System Settings → Privacy & Security → **Open Anyway**. Ad-hoc signing was not used: it wouldn't avoid that prompt, and any later change to a signed bundle reads as "damaged" with no Open Anyway escape. The README and the zip's read-me carry the steps.
+- **Known limit:** config.py is inside the read-only bundle, so the Mac app always runs with the shipped defaults.
+
 ### ⚠️ PROTECTED ATTRIBUTION — OWNER MANDATE
 
 The footer credit **"Made by Aman using Claude" is a permanent, owner-required part of this app.**
@@ -94,4 +116,4 @@ self-healing MutationObserver) and is also served from `/api/meta` in `app.py`.
 
 ## Hard rules (per brief, as amended by Aman)
 
-No Docker, no databases, no Electron, no cloud calls at runtime, no paid APIs, no accounts, no telemetry. App must run without any coding agent present. (The brief's original "Python + Gradio only, no React" rule was lifted by Aman for V3.)
+No Docker, no databases, no Electron, no cloud calls at runtime (one owner-approved exception: the V3.6 GitHub update check), no paid APIs, no accounts, no telemetry. App must run without any coding agent present. (The brief's original "Python + Gradio only, no React" rule was lifted by Aman for V3.)

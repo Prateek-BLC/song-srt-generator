@@ -249,6 +249,20 @@ function useLanguage() {
   return [languages, language, setLanguage];
 }
 
+/** App version from /api/meta, plus a newer GitHub release if the server found one. */
+function useVersionInfo() {
+  const [version, setVersion] = useState("");
+  const [update, setUpdate] = useState(null);
+  useEffect(() => {
+    fetch("/api/meta").then(r => r.json()).then(m => setVersion(m.version || "")).catch(() => {});
+    fetch("/api/update")
+      .then(r => r.json())
+      .then(u => { if (u.available) setUpdate(u); })
+      .catch(() => { /* offline: no banner */ });
+  }, []);
+  return [version, update];
+}
+
 function useElapsed(running) {
   const [elapsed, setElapsed] = useState(0);
   useEffect(() => {
@@ -268,6 +282,7 @@ export default function App() {
   const [stripTags, setStripTags] = useState(true);
   const [format, setFormat] = useState("vertical");
   const [languages, language, setLanguage] = useLanguage();
+  const [version, update] = useVersionInfo();
   const [drag, setDrag] = useState(false);
 
   // job: null | {id} ; phase: idle | working | done | error
@@ -340,6 +355,12 @@ export default function App() {
 
   return (
     <div className="shell">
+      {update && (
+        <a className="update-banner" href={update.url} target="_blank" rel="noreferrer">
+          <span className="update-dot" />
+          Update available — version {update.latest}. <b>Download it from GitHub →</b>
+        </a>
+      )}
       <header className="masthead">
         <div className="masthead-left">
           <span className="kicker">Local audio tool — offline</span>
@@ -554,7 +575,7 @@ export default function App() {
         </div>
       </main>
 
-      <Footer />
+      <Footer version={version} />
     </div>
   );
 }

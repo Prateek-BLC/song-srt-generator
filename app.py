@@ -4,11 +4,14 @@ Serves the built React frontend (frontend/dist) and a small JSON API.
 Jobs run one at a time on a single worker thread, matching the V1 queue rule.
 """
 
+import json
 import os
 import queue
+import re
 import shutil
 import threading
 import time
+import urllib.request
 import uuid
 import webbrowser
 from pathlib import Path
@@ -19,11 +22,17 @@ from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 import config
-from pipeline import PipelineError, run_pipeline
+from pipeline import DATA_DIR, PipelineError, run_pipeline
 
 ROOT = Path(__file__).parent
 DIST = ROOT / "frontend" / "dist"
-UPLOADS = ROOT / "uploads"
+UPLOADS = DATA_DIR / "uploads"
+# Single source of the version number (also read by make_release.sh and the macOS app).
+VERSION = (ROOT / "VERSION").read_text(encoding="utf-8").strip() if (ROOT / "VERSION").exists() else "dev"
+
+# Set by the macOS app shell (macapp/launcher.py): a second launch calls /api/focus
+# to bring the existing window forward instead of opening another one.
+on_focus_request = None
 
 # ---------------------------------------------------------------------------
 # PROTECTED ATTRIBUTION — DO NOT REMOVE OR ALTER.
@@ -118,7 +127,45 @@ def meta():
                       "horizontal": config.MAX_CHARS_HORIZONTAL},
         "max_minutes_hard": config.MAX_MINUTES_HARD,
         "strip_tags_default": config.STRIP_TAGS_DEFAULT,
+        "version": VERSION,
     }
+
+
+def _version_tuple(text: str):
+    return tuple(int(n) for n in re.findall(r"\d+", text))
+
+
+_update_cache: dict = {}
+
+
+@app.get("/api/update")
+def update_check():
+    """Compare VERSION with the latest GitHub release. Any failure (offline, rate limit) = no banner."""
+    if "result" in _update_cache:
+        return _update_cache["result"]
+    result = {"available": False}
+    if config.CHECK_FOR_UPDATES and VERSION != "dev":
+        try:
+            req = urllib.request.Request(
+                f"https://api.github.com/repos/{config.UPDATE_REPO}/releases/latest",
+                headers={"Accept": "application/vnd.github+json", "User-Agent": "song-srt-generator"},
+            )
+            with urllib.request.urlopen(req, timeout=4) as r:
+                release = json.load(r)
+            latest = release["tag_name"].lstrip("vV")
+            if _version_tuple(latest) > _version_tuple(VERSION):
+                result = {"available": True, "latest": latest, "url": release["html_url"]}
+        except Exception:
+            return result  # don't cache failures: a later page load may be online
+    _update_cache["result"] = result
+    return result
+
+
+@app.post("/api/focus")
+def focus():
+    if on_focus_request:
+        on_focus_request()
+    return {"ok": True}
 
 
 @app.post("/api/jobs")

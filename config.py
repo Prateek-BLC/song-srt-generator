@@ -10,8 +10,9 @@ LANGUAGE = "en"
 # they write without spaces and need a different line splitter.
 LANGUAGES = [
     ("en", "English"),
-    ("es", "Spanish"),
     ("hi", "Hindi"),
+    ("hinglish", "Hinglish"),
+    ("es", "Spanish"),
     ("pt", "Portuguese"),
     ("fr", "French"),
     ("de", "German"),
@@ -19,6 +20,15 @@ LANGUAGES = [
     ("pa", "Punjabi"),
     ("ur", "Urdu"),
 ]
+
+# Dropdown choices that aren't Whisper codes, mapped to the code actually used for alignment.
+# Hinglish (Hindi in Roman script) aligns best as English.
+LANGUAGE_ALIASES = {"hinglish": "en"}
+
+# On launch, ask GitHub whether a newer release exists and show a small banner if so.
+# This is the app's only network call after setup; it fails silently when offline.
+CHECK_FOR_UPDATES = True
+UPDATE_REPO = "brightlifecreations-projects/song-srt-generator"
 
 # Bind address. "127.0.0.1" = this machine only. "0.0.0.0" = teammates on your LAN can open it.
 HOST = "127.0.0.1"

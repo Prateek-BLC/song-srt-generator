@@ -1,0 +1,66 @@
+#!/bin/bash
+# Song SRT Generator.app entry point (Contents/MacOS/launcher).
+#
+# The bundle is read-only. Everything writable — Python, the venv, the AI models,
+# jobs/ — lives in ~/Library/Application Support/Song SRT Generator/, which app
+# updates reuse (models are never re-downloaded). This script only bootstraps a
+# Python with pywebview so launcher.py can show the setup/progress window; all
+# the heavy setup (packages, models, warmup) happens there.
+
+RES="$(cd "$(dirname "$0")/../Resources" && pwd)"
+SUPPORT="$HOME/Library/Application Support/Song SRT Generator"
+VENV="$SUPPORT/venv"
+PY="$VENV/bin/python"
+
+alert() {
+  osascript -e "display alert \"Song SRT Generator\" message \"$1\" as critical" >/dev/null 2>&1
+}
+
+if [ "$(uname -m)" != "arm64" ]; then
+  alert "This app is for Apple Silicon Macs (M1, M2, M3, M4). This Mac has an Intel processor."
+  exit 1
+fi
+
+mkdir -p "$SUPPORT/bin"
+cd "$SUPPORT" || exit 1
+
+# Copy the bundled tools into our own folder (refreshed when an update ships new
+# ones). The copies can have the download quarantine flag removed; the bundle can't.
+for tool in uv ffmpeg ffprobe; do
+  if ! cmp -s "$RES/bin/$tool" "bin/$tool"; then
+    cp -f "$RES/bin/$tool" "bin/$tool"
+    chmod +x "bin/$tool"
+  fi
+done
+xattr -d com.apple.quarantine bin/* 2>/dev/null
+
+export PATH="$SUPPORT/bin:$PATH"
+export UV_PYTHON_INSTALL_DIR="$SUPPORT/python"
+export UV_PYTHON_PREFERENCE="only-managed"
+export UV_CACHE_DIR="$SUPPORT/uv-cache"
+export HF_HOME="$SUPPORT/models/hf"
+export SRT_DATA_DIR="$SUPPORT"
+export SRT_APP_DIR="$RES/app"
+export PYTHONPYCACHEPREFIX="$SUPPORT/pycache"
+
+if ! "$PY" -c "import webview" >/dev/null 2>&1; then
+  # First launch: fetch Python 3.10 + pywebview (~40 MB) so the setup window can open.
+  osascript -e 'display dialog "Getting ready for the first launch…
+
+This takes about a minute. A setup window opens next." buttons {"OK"} default button 1 with title "Song SRT Generator" with icon note giving up after 900' >/dev/null 2>&1 &
+  DIALOG=$!
+  grep -iE '^(bottle|proxy-tools|pyobjc|pywebview|typing.extensions)' "$SRT_APP_DIR/requirements.txt" > bootstrap-requirements.txt
+  {
+    echo "=== bootstrap $(date)"
+    bin/uv venv --allow-existing --python 3.10 "$VENV" &&
+      bin/uv pip install --python "$PY" -r bootstrap-requirements.txt
+  } >> install.log 2>&1
+  STATUS=$?
+  kill "$DIALOG" 2>/dev/null
+  if [ $STATUS -ne 0 ]; then
+    alert "First-time setup couldn't download what it needs. Check your internet connection and open the app again. Details: ~/Library/Application Support/Song SRT Generator/install.log"
+    exit 1
+  fi
+fi
+
+exec "$PY" "$RES/launcher.py"
